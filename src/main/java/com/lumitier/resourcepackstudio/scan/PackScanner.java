@@ -99,9 +99,31 @@ public final class PackScanner {
 			variants.put(item, new ArrayList<>());
 		}
 
+		// Kandidaten EINMAL kleingeschrieben vorbereiten - nicht fuer jedes
+		// Pack neu. Bei ueber 5000 Eintraegen und 20 Packs machte das
+		// Zusammensetzen der Pfade einen guten Teil der Suchzeit aus.
+		List<String[][]> paths = new ArrayList<>(items.size());
+		List<boolean[][]> legacy = new ArrayList<>(items.size());
+		for (StudioItem item : variants.keySet()) {
+			List<StudioItem.Part> parts = item.parts();
+			String[][] p = new String[parts.size()][];
+			boolean[][] l = new boolean[parts.size()][];
+			for (int i = 0; i < parts.size(); i++) {
+				List<StudioItem.Candidate> cs = parts.get(i).candidates();
+				p[i] = new String[cs.size()];
+				l[i] = new boolean[cs.size()];
+				for (int k = 0; k < cs.size(); k++) {
+					p[i][k] = cs.get(k).path().toLowerCase(Locale.ROOT);
+					l[i][k] = cs.get(k).legacy();
+				}
+			}
+			paths.add(p);
+			legacy.add(l);
+		}
+
 		for (Pack pack : packs) {
 			try {
-				index(pack, variants);
+				index(pack, variants, paths, legacy);
 			} catch (Exception e) {
 				problems.add(pack.name() + ": " + e.getMessage());
 				ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not read pack {}", pack.path(), e);
@@ -168,40 +190,63 @@ public final class PackScanner {
 	// Texturen suchen
 	// ------------------------------------------------------------------
 
-	private static void index(Pack pack, Map<StudioItem, List<Variant>> variants) throws IOException {
+	private static void index(Pack pack, Map<StudioItem, List<Variant>> variants,
+	                          List<String[][]> paths, List<boolean[][]> legacyFlags) throws IOException {
 		// Bei Zips alle Eintraege EINMAL einlesen, dann nur noch nachschlagen.
 		// Kleingeschrieben -> wie es WIRKLICH in der Zip steht: Manche Packs
 		// haben die Gross-/Kleinschreibung falsch, gelesen wird spaeter aber
 		// mit dem echten Namen.
-		Map<String, String> names = null;
+		//
+		// ORDNER GENAUSO: einmal durchlaufen statt jede moegliche Datei
+		// einzeln zu pruefen. Bei ueber 5000 Eintraegen (davon 4000 Sounds)
+		// und 20 entpackten Packs waren das ueber 200.000 Dateizugriffe -
+		// die Suche dauerte 4,6 statt 0,1 Sekunden.
+		Map<String, String> names = new HashMap<>();
 		if (pack.zip()) {
-			names = new HashMap<>();
 			try (ZipFile zip = new ZipFile(pack.path().toFile())) {
 				Enumeration<? extends ZipEntry> e = zip.entries();
+				String prefix = pack.prefix().toLowerCase(Locale.ROOT);
 				while (e.hasMoreElements()) {
 					String n = e.nextElement().getName();
-					names.putIfAbsent(n.toLowerCase(Locale.ROOT), n);
+					String lower = n.toLowerCase(Locale.ROOT);
+					// Ohne den Unterordner gespeichert - dann passt der
+					// Schluessel direkt zu den vorbereiteten Pfaden.
+					if (lower.startsWith(prefix)) {
+						names.putIfAbsent(lower.substring(prefix.length()), n);
+					}
+				}
+			}
+		} else {
+			// Nur die Ordner, in denen gesucht wird - nicht das ganze Pack.
+			for (String dir : new String[] {"assets/minecraft/textures", "assets/minecraft/sounds"}) {
+				Path root = pack.path().resolve(dir);
+				if (!Files.isDirectory(root)) {
+					continue;
+				}
+				try (java.util.stream.Stream<Path> files = Files.walk(root, 12)) {
+					files.filter(Files::isRegularFile).forEach(f -> {
+						String rel = pack.path().relativize(f).toString().replace('\\', '/');
+						names.putIfAbsent(rel.toLowerCase(Locale.ROOT), rel);
+					});
 				}
 			}
 		}
+		int n = 0;
 		for (Map.Entry<StudioItem, List<Variant>> en : variants.entrySet()) {
-			List<StudioItem.Part> parts = en.getKey().parts();
+			String[][] p = paths.get(n);
+			boolean[][] l = legacyFlags.get(n);
+			n++;
 			String[] found = null;
 			boolean legacy = false;
-			for (int i = 0; i < parts.size(); i++) {
-				for (StudioItem.Candidate c : parts.get(i).candidates()) {
-					String real;
-					if (names != null) {
-						real = names.get((pack.prefix() + c.path()).toLowerCase(Locale.ROOT));
-					} else {
-						real = Files.isRegularFile(pack.path().resolve(c.path())) ? c.path() : null;
-					}
+			for (int i = 0; i < p.length; i++) {
+				for (int k = 0; k < p[i].length; k++) {
+					String real = names.get(p[i][k]);
 					if (real != null) {
 						if (found == null) {
-							found = new String[parts.size()];
+							found = new String[p.length];
 						}
 						found[i] = real;
-						legacy |= c.legacy();
+						legacy |= l[i][k];
 						break;
 					}
 				}

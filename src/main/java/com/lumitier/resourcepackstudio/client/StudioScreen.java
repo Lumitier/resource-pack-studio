@@ -9,6 +9,7 @@ import com.lumitier.lumilib.client.Theme;
 import com.lumitier.lumilib.client.Ui;
 import com.lumitier.lumilib.client.gpu.Backdrop;
 import com.lumitier.lumilib.client.gpu.Sdf;
+import com.lumitier.resourcepackstudio.ResourcePackStudio;
 import com.lumitier.resourcepackstudio.scan.PackScanner;
 import com.lumitier.resourcepackstudio.scan.StudioItem;
 import com.lumitier.resourcepackstudio.scan.StudioItems;
@@ -19,6 +20,7 @@ import net.minecraft.client.gui.ScreenRect;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -299,8 +301,9 @@ public final class StudioScreen extends ScaledScreen {
 
 	private String[] rowCount = new String[0];
 
+	/** Blocks: alles mit 3D-Vorschau und Bloecke mit Sondermodell (Kiste, Bett ...). */
 	private static int category(StudioItem it) {
-		return it.sound() ? CAT_SOUNDS : it.cube() ? CAT_BLOCKS : CAT_ITEMS;
+		return it.sound() ? CAT_SOUNDS : (it.cube() || it.block() != null) ? CAT_BLOCKS : CAT_ITEMS;
 	}
 
 	private static final String[] CAT_KEYS = {
@@ -570,6 +573,9 @@ public final class StudioScreen extends ScaledScreen {
 	private void onBuilt(PackBuilder.Built b) {
 		this.built = b;
 		if (b.ok()) {
+			// Fertig: Auswahl leeren, damit das naechste Pack bei null beginnt.
+			StudioIndex.clearSelection();
+			refreshLabels();
 			this.dialog = Dialog.DONE;
 			this.dlgTitle = Text.translatable("resourcepackstudio.create.done").getString();
 			this.dlgLine1 = b.name();
@@ -1053,6 +1059,18 @@ public final class StudioScreen extends ScaledScreen {
 			drawPlay(ctx, x, y, size);
 			return;
 		}
+		if (!item.cube() && item.modern().startsWith("entity/")) {
+			// Faltbogen (Kiste, Bett, Schild ...): das ganze Bild, eingepasst.
+			Textures.Tex t = tex(item, v, 0);
+			if (t != null) {
+				float sc = size / (float) Math.max(t.w(), t.h());
+				int dw = Math.max(1, Math.round(t.w() * sc));
+				int dh = Math.max(1, Math.round(t.h() * sc));
+				ctx.drawTexture(RenderPipelines.GUI_TEXTURED, t.id(), x + (size - dw) / 2, y + (size - dh) / 2,
+					0.0F, 0.0F, dw, dh, t.w(), t.h(), t.w(), t.h());
+			}
+			return;
+		}
 		if (!item.cube()) {
 			Textures.Tex t = tex(item, v, 0);
 			if (t != null) {
@@ -1300,6 +1318,21 @@ public final class StudioScreen extends ScaledScreen {
 
 	@Override
 	public boolean keyPressed(KeyInput input) {
+		// Strg+V selbst erkennen, fuer beide Felder - zusaetzlich zu
+		// Minecrafts isPaste() wird direkt nachgesehen, ob Strg gedrueckt ist.
+		if (pasteKey(input)) {
+			String clip = this.client == null ? null : this.client.keyboard.getClipboard();
+			if (dialog == Dialog.NAME) {
+				nameField.paste(clip);
+				return true;
+			}
+			if (dialog == Dialog.NONE && search.focused() && clip != null) {
+				String clean = clip.replaceAll("\\p{Cntrl}+", " ");
+				clean.codePoints().forEach(cp -> search.charTyped(new CharInput(cp, 0)));
+				buildRows();
+				return true;
+			}
+		}
 		if (dialog != Dialog.NONE) {
 			int key = input.getKeycode();
 			if (key == GLFW.GLFW_KEY_ESCAPE) {
@@ -1329,6 +1362,17 @@ public final class StudioScreen extends ScaledScreen {
 			return true;
 		}
 		return super.keyPressed(input);
+	}
+
+	/** V mit Strg - ueber die Tastenbits ODER den Zustand der Strg-Tasten. */
+	private boolean pasteKey(KeyInput input) {
+		if (input.key() != GLFW.GLFW_KEY_V || this.client == null) {
+			return false;
+		}
+		boolean ctrl = (input.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0
+			|| InputUtil.isKeyPressed(this.client.getWindow(), GLFW.GLFW_KEY_LEFT_CONTROL)
+			|| InputUtil.isKeyPressed(this.client.getWindow(), GLFW.GLFW_KEY_RIGHT_CONTROL);
+		return ctrl;
 	}
 
 	@Override

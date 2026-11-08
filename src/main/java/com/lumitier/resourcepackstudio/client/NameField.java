@@ -4,6 +4,7 @@ import com.lumitier.lumilib.client.Draw;
 import com.lumitier.lumilib.client.Surface;
 import com.lumitier.lumilib.client.Theme;
 import com.lumitier.lumilib.client.Ui;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.input.CharInput;
@@ -13,8 +14,8 @@ import org.lwjgl.glfw.GLFW;
 /**
  * Eingabefeld fuer den Pack-Namen im LumiLib-Look.
  *
- * Bewusst einfach: Schreibmarke immer am Ende, Backspace loescht. Mehr
- * braucht ein Name nicht. Leer zeigt es den Platzhalter (den Namen, der
+ * Bewusst einfach: Schreibmarke immer am Ende, Backspace loescht, Strg+V
+ * fuegt ein. Mehr braucht ein Name nicht. Leer zeigt es den Platzhalter (den Namen, der
  * dann benutzt wird).
  */
 final class NameField {
@@ -57,6 +58,12 @@ final class NameField {
 
 	/** @return true, wenn die Taste verbraucht wurde. */
 	boolean keyPressed(KeyInput input) {
+		// Strg+V: Zeilenumbrueche und Steuerzeichen werden zu Leerzeichen,
+		// abgeschnitten wird bei der Hoechstlaenge.
+		if (input.isPaste()) {
+			paste(MinecraftClient.getInstance().keyboard.getClipboard());
+			return true;
+		}
 		if (input.getKeycode() == GLFW.GLFW_KEY_BACKSPACE) {
 			if (text.length() > 0) {
 				text.setLength(text.length() - 1);
@@ -64,6 +71,16 @@ final class NameField {
 			return true;
 		}
 		return false;
+	}
+
+	/** Text einfuegen - Zeilenumbrueche werden zu Leerzeichen, gekuerzt auf MAX. */
+	void paste(String clip) {
+		if (clip == null) {
+			return;
+		}
+		String clean = clip.replaceAll("\\p{Cntrl}+", " ").strip();
+		int room = MAX - text.length();
+		text.append(clean, 0, Math.max(0, Math.min(room, clean.length())));
 	}
 
 	boolean charTyped(CharInput input) {

@@ -80,6 +80,7 @@ public final class ItemDiscovery {
 		}
 
 		int skipped = 0;
+		Set<List<String>> seenSpecial = new HashSet<>();
 		int cubes = 0;
 		for (Item item : Registries.ITEM) {
 			if (item == Items.AIR) {
@@ -95,6 +96,9 @@ public final class ItemDiscovery {
 				found = tex != null
 					? StudioItem.flat(id.getPath(), StudioItems.OTHER, tex, legacyOf(tex))
 					: block(pack, item, id.getPath());
+				if (found == null) {
+					found = special(pack, item, id.getPath(), seenSpecial);
+				}
 			} catch (Throwable e) {
 				found = null;
 			}
@@ -369,6 +373,15 @@ public final class ItemDiscovery {
 			JsonElement m = o.get("model");
 			return m != null && m.isJsonPrimitive() ? m.getAsString() : null;
 		}
+		// Je nach Ansicht verschieden (Fernrohr, Dreizack): die Fassung fuer
+		// das Inventar ("gui") gewinnt - in der Hand sind sie 3D.
+		JsonElement gui = guiCase(o);
+		if (gui != null) {
+			String r = baseModel(gui, depth + 1);
+			if (r != null) {
+				return r;
+			}
+		}
 		for (String key : new String[] {"fallback", "on_false"}) {
 			String r = baseModel(o.get(key), depth + 1);
 			if (r != null) {
@@ -392,6 +405,166 @@ public final class ItemDiscovery {
 			}
 		}
 		return null;
+	}
+
+	/** Bei select nach display_context: das Modell fuer "gui", sonst null. */
+	private static JsonElement guiCase(JsonObject o) {
+		JsonElement prop = o.get("property");
+		JsonElement cases = o.get("cases");
+		if (prop == null || !prop.isJsonPrimitive() || !prop.getAsString().endsWith("display_context")
+			|| cases == null || !cases.isJsonArray()) {
+			return null;
+		}
+		for (JsonElement c : cases.getAsJsonArray()) {
+			if (!c.isJsonObject()) {
+				continue;
+			}
+			JsonElement when = c.getAsJsonObject().get("when");
+			boolean gui = when != null && (when.isJsonArray()
+				? when.getAsJsonArray().contains(new com.google.gson.JsonPrimitive("gui"))
+				: when.isJsonPrimitive() && when.getAsString().equals("gui"));
+			if (gui) {
+				return c.getAsJsonObject().get("model");
+			}
+		}
+		return null;
+	}
+
+	// ------------------------------------------------------------------
+	// Sondermodelle: Kisten, Betten, Shulker, Banner, Koepfe, Schild ...
+	// ------------------------------------------------------------------
+
+	/**
+	 * Items, die Minecraft aus einem Wesen-Modell zeichnet. Ihre Bilder
+	 * liegen unter textures/entity/ und sind "Faltbogen" - alle Seiten auf
+	 * einem Bild. Die Vorschau zeigt den ganzen Bogen.
+	 *
+	 * Welche Bilder: aus dem Eintrag "texture" des Sondermodells, oder fest
+	 * je Art (Schild, Banner, Koepfe). Nur Bilder, die es in Vanilla gibt.
+	 * Spielerkoepfe fehlen - die zeigen einen Skin, kein Pack-Bild.
+	 */
+	private static StudioItem special(ResourcePack pack, Item item, String itemId, Set<List<String>> seen) throws Exception {
+		JsonElement def = read(pack, Identifier.ofVanilla("items/" + itemId + ".json"));
+		if (def == null || !def.isJsonObject()) {
+			return null;
+		}
+		JsonObject sp = findSpecial(def.getAsJsonObject().get("model"), 0);
+		if (sp == null) {
+			return null;
+		}
+		String type = sp.has("type") ? path(sp.get("type").getAsString()) : "";
+		String tex = sp.has("texture") ? path(sp.get("texture").getAsString()) : null;
+		List<String> textures = new ArrayList<>();
+		switch (type) {
+			case "chest" -> {
+				if (tex != null) {
+					textures.add("entity/chest/" + tex);
+					textures.add("entity/chest/" + tex + "_left");
+					textures.add("entity/chest/" + tex + "_right");
+				}
+			}
+			case "bed" -> {
+				if (tex != null) {
+					textures.add("entity/bed/" + tex);
+				}
+			}
+			case "shulker_box" -> {
+				if (tex != null) {
+					textures.add("entity/shulker/" + tex);
+				}
+			}
+			case "banner" -> textures.add("entity/banner_base");
+			case "shield" -> {
+				textures.add("entity/shield_base_nopattern");
+				textures.add("entity/shield_base");
+			}
+			case "conduit" -> {
+				textures.add("entity/conduit/base");
+				textures.add("entity/conduit/cage");
+			}
+			case "decorated_pot" -> {
+				textures.add("entity/decorated_pot/decorated_pot_base");
+				textures.add("entity/decorated_pot/decorated_pot_side");
+			}
+			case "head" -> {
+				String kind = sp.has("kind") ? sp.get("kind").getAsString() : "";
+				String t = switch (kind) {
+					case "skeleton" -> "entity/skeleton/skeleton";
+					case "wither_skeleton" -> "entity/skeleton/wither_skeleton";
+					case "zombie" -> "entity/zombie/zombie";
+					case "creeper" -> "entity/creeper/creeper";
+					case "piglin" -> "entity/piglin/piglin";
+					case "dragon" -> "entity/enderdragon/dragon";
+					default -> null;
+				};
+				if (t != null) {
+					textures.add(t);
+				}
+			}
+			default -> {
+				// Kupfergolem-Statue u. ae.: "texture" ist ein voller Pfad.
+				if (tex != null && tex.startsWith("textures/") && tex.endsWith(".png")) {
+					textures.add(tex.substring(9, tex.length() - 4));
+				}
+			}
+		}
+		// Nur, was es wirklich gibt.
+		textures.removeIf(t -> !exists(pack, "textures/" + t + ".png"));
+		if (textures.isEmpty() || !seen.add(List.copyOf(textures))) {
+			// Leer - oder dieselben Bilder wie ein Eintrag davor (16 Banner
+			// teilen sich ein Bild, gewachste Statuen die ungewachsten).
+			return null;
+		}
+		List<StudioItem.Part> parts = new ArrayList<>();
+		for (String t : textures) {
+			parts.add(new StudioItem.Part(t, List.of(), true));
+		}
+		String block = item instanceof BlockItem bi ? Registries.BLOCK.getId(bi.getBlock()).getPath() : null;
+		return new StudioItem(itemId, StudioItems.OTHER, List.copyOf(parts), null, block);
+	}
+
+	/** Erstes Sondermodell im Item-Eintrag (Grundzustand bevorzugt). */
+	private static JsonObject findSpecial(JsonElement node, int depth) {
+		if (node == null || !node.isJsonObject() || depth > 8) {
+			return null;
+		}
+		JsonObject o = node.getAsJsonObject();
+		String type = o.has("type") ? o.get("type").getAsString() : "";
+		if (type.endsWith("special")) {
+			JsonElement m = o.get("model");
+			return m != null && m.isJsonObject() ? m.getAsJsonObject() : null;
+		}
+		for (String key : new String[] {"fallback", "on_false"}) {
+			JsonObject r = findSpecial(o.get(key), depth + 1);
+			if (r != null) {
+				return r;
+			}
+		}
+		JsonElement cases = o.get("cases");
+		if (cases != null && cases.isJsonArray()) {
+			for (JsonElement c : cases.getAsJsonArray()) {
+				if (c.isJsonObject()) {
+					JsonObject r = findSpecial(c.getAsJsonObject().get("model"), depth + 1);
+					if (r != null) {
+						return r;
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private static String path(String ref) {
+		Identifier id = Identifier.tryParse(ref);
+		return id == null ? ref : id.getPath();
+	}
+
+	private static boolean exists(ResourcePack pack, String path) {
+		try {
+			return pack.open(ResourceType.CLIENT_RESOURCES, Identifier.ofVanilla(path)) != null;
+		} catch (Throwable e) {
+			return false;
+		}
 	}
 
 	private static JsonElement read(ResourcePack pack, Identifier id) throws Exception {
