@@ -5,9 +5,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.lumitier.resourcepackstudio.ResourcePackStudio;
+import com.lumitier.resourcepackstudio.scan.LegacyBlocks;
 import com.lumitier.resourcepackstudio.scan.StudioItem;
 import com.lumitier.resourcepackstudio.scan.StudioItems;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
 import net.minecraft.registry.Registries;
@@ -20,8 +22,10 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -35,10 +39,14 @@ import java.util.Set;
  * Bei Items mit mehreren Zustaenden (Uhr, Kompass, Bogen, Armbrust) wird
  * der Grundzustand genommen: fallback bzw. on_false, sonst der erste Fall.
  *
- * BLOECKE FEHLEN NOCH: Stein, Bretter usw. haben kein layer0, sondern ein
- * 3D-Modell mit mehreren Bildern. Die kommen in einer eigenen Phase.
- * Setzlinge, Blumen, Tueren usw. sind flach und deshalb schon dabei - ihr
- * Bild liegt teils im Block-Ordner.
+ * BLOECKE: Hat das Modell kein layer0, werden seine Quader gelesen (Wuerfel,
+ * Treppe, Stufe, Zaun ...) - fuer die Vorschau die Seiten oben, Norden und
+ * Osten mit ihren Bildern. Alle Bilder des Blocks werden Teile. Was nicht
+ * dem Block selbst gehoert (Treppe -> Bretter), ist ein geliehener Teil;
+ * siehe StudioItem.Part.own.
+ *
+ * Setzlinge, Blumen, Tueren usw. sind flach - ihr Bild liegt teils im
+ * Block-Ordner.
  *
  * NUR VANILLA: Items anderer Mods werden uebersprungen.
  *
@@ -72,6 +80,7 @@ public final class ItemDiscovery {
 		}
 
 		int skipped = 0;
+		int cubes = 0;
 		for (Item item : Registries.ITEM) {
 			if (item == Items.AIR) {
 				continue;
@@ -80,26 +89,27 @@ public final class ItemDiscovery {
 			if (!Identifier.DEFAULT_NAMESPACE.equals(id.getNamespace()) || known.contains(id.getPath())) {
 				continue;
 			}
-			String tex;
+			StudioItem found;
 			try {
-				tex = flatTexture(pack, id.getPath());
+				String tex = flatTexture(pack, id.getPath());
+				found = tex != null
+					? StudioItem.flat(id.getPath(), StudioItems.OTHER, tex, legacyOf(tex))
+					: block(pack, item, id.getPath());
 			} catch (Throwable e) {
-				tex = null;
+				found = null;
 			}
-			if (tex == null) {
+			if (found == null) {
 				skipped++;
 				continue;
 			}
-			// 1.8 hatte "items" und "blocks" statt "item" und "block". Gleicher
-			// Name im alten Ordner wird mitgesucht - fuer umbenannte Texturen
-			// gibt es nur bei den PvP-Items eine Liste.
-			String legacy = tex.startsWith("item/") ? "items/" + tex.substring(5)
-				: tex.startsWith("block/") ? "blocks/" + tex.substring(6) : null;
-			out.add(new StudioItem(id.getPath(), StudioItems.OTHER, tex,
-				legacy == null ? List.of() : List.of(legacy)));
+			if (found.cube()) {
+				cubes++;
+			}
+			out.add(found);
 		}
-		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] {} flat item(s) found, {} skipped (blocks and special models).",
-			out.size(), skipped);
+		int sounds = addSounds(pack, out);
+		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] {} entries: {} block(s), {} sound(s), the rest items. {} item(s) skipped (chests, beds, heads ...).",
+			out.size(), cubes, sounds, skipped);
 		return out;
 	}
 
@@ -138,6 +148,205 @@ public final class ItemDiscovery {
 			model = parent != null && parent.isJsonPrimitive() ? parent.getAsString() : null;
 		}
 		return null;
+	}
+
+	/**
+	 * Alle Sounds aus Minecrafts Standard-Pack (assets/minecraft/sounds).
+	 * Ein Eintrag pro Datei - Packs ersetzen Sounds dateiweise. Gruppe ist
+	 * der oberste Ordner (damage, entity, random ...).
+	 */
+	private static int addSounds(ResourcePack pack, List<StudioItem> out) {
+		java.util.TreeSet<String> paths = new java.util.TreeSet<>();
+		try {
+			pack.findResources(ResourceType.CLIENT_RESOURCES, Identifier.DEFAULT_NAMESPACE, "sounds",
+				(id, supplier) -> {
+					String p = id.getPath();
+					if (p.endsWith(".ogg")) {
+						paths.add(p.substring(0, p.length() - 4));
+					}
+				});
+		} catch (Throwable e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not list the vanilla sounds.", e);
+		}
+		for (String p : paths) {
+			// p = "sounds/damage/hit1"
+			String rel = p.substring(StudioItem.SOUNDS.length());
+			int slash = rel.indexOf('/');
+			String group = StudioItems.SOUND_GROUP + (slash > 0 ? rel.substring(0, slash) : "");
+			out.add(StudioItem.flat(StudioItems.SOUND_ID + rel, group, p, List.of()));
+		}
+		return paths.size();
+	}
+
+	/** 1.8 hatte "items"/"blocks" statt "item"/"block" - und teils andere Namen. */
+	private static List<String> legacyOf(String modern) {
+		String l = LegacyBlocks.legacy(modern);
+		return l == null ? List.of() : List.of(l);
+	}
+
+	/**
+	 * Ein Block mit 3D-Vorschau, oder null, wenn sein Modell keine Quader
+	 * hat (Kisten, Betten, Schilder - die zeichnet Minecraft anders).
+	 */
+	private static StudioItem block(ResourcePack pack, Item item, String itemId) throws Exception {
+		JsonElement def = read(pack, Identifier.ofVanilla("items/" + itemId + ".json"));
+		if (def == null || !def.isJsonObject()) {
+			return null;
+		}
+		String model = baseModel(def.getAsJsonObject().get("model"), 0);
+
+		// Kette der Modelle ablaufen: Bilder sammeln (das Kind gewinnt) und
+		// das erste Modell mit Elementen merken.
+		Map<String, String> textures = new HashMap<>();
+		JsonArray elements = null;
+		for (int i = 0; model != null && i < MAX_PARENTS; i++) {
+			Identifier mid = Identifier.tryParse(model);
+			if (mid == null) {
+				return null;
+			}
+			JsonElement m = read(pack, Identifier.of(mid.getNamespace(), "models/" + mid.getPath() + ".json"));
+			if (m == null || !m.isJsonObject()) {
+				break;
+			}
+			JsonObject o = m.getAsJsonObject();
+			if (o.has("textures") && o.get("textures").isJsonObject()) {
+				for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("textures").entrySet()) {
+					if (e.getValue().isJsonPrimitive()) {
+						textures.putIfAbsent(e.getKey(), e.getValue().getAsString());
+					}
+				}
+			}
+			if (elements == null && o.has("elements") && o.get("elements").isJsonArray()) {
+				elements = o.getAsJsonArray("elements");
+			}
+			JsonElement parent = o.get("parent");
+			model = parent != null && parent.isJsonPrimitive() ? parent.getAsString() : null;
+		}
+		if (elements == null || elements.isEmpty()) {
+			return null;
+		}
+
+		// Quader einlesen. Teile entstehen dabei in der Reihenfolge, in der
+		// sie zuerst gebraucht werden.
+		List<String> paths = new ArrayList<>();
+		List<StudioItem.Box> boxes = new ArrayList<>();
+		for (JsonElement el : elements) {
+			if (!el.isJsonObject()) {
+				continue;
+			}
+			JsonObject e = el.getAsJsonObject();
+			float[] from = vec(e.get("from"));
+			float[] to = vec(e.get("to"));
+			if (from == null || to == null || !e.has("faces") || !e.get("faces").isJsonObject()) {
+				continue;
+			}
+			JsonObject faces = e.getAsJsonObject("faces");
+			// Standard-Ausschnitte wie in Minecraft, wenn "uv" fehlt.
+			StudioItem.Face up = face(faces, "up", textures, paths,
+				from[0], from[2], to[0], to[2]);
+			StudioItem.Face north = face(faces, "north", textures, paths,
+				16 - to[0], 16 - to[1], 16 - from[0], 16 - from[1]);
+			StudioItem.Face east = face(faces, "east", textures, paths,
+				16 - to[2], 16 - to[1], 16 - from[2], 16 - from[1]);
+			if (up == null && north == null && east == null) {
+				continue;
+			}
+			boxes.add(new StudioItem.Box(from[0], from[1], from[2], to[0], to[1], to[2], up, north, east));
+		}
+		if (boxes.isEmpty()) {
+			return null;
+		}
+		// Hinten zuerst: Je weiter nach Osten, oben und Norden, desto naeher
+		// am Betrachter. So verdecken vordere Quader die hinteren richtig.
+		boxes.sort((a, b) -> Float.compare(
+			(a.x1() + a.x2()) + (a.y1() + a.y2()) - (a.z1() + a.z2()),
+			(b.x1() + b.x2()) + (b.y1() + b.y2()) - (b.z1() + b.z2())));
+
+		// Uebrige Bilder des Modells (Partikel, Unterseite ...) auch als Teile.
+		for (String v : textures.values()) {
+			String p = resolve(v, textures);
+			if (p != null && !paths.contains(p)) {
+				paths.add(p);
+			}
+		}
+
+		// Eigene Bilder: der Name passt zum Block ("oak_log" -> oak_log,
+		// oak_log_top; "snow_block" -> snow). Alles andere ist geliehen
+		// (Eichentreppe -> Eichenbretter, Werkbank -> Bretter unten).
+		List<StudioItem.Part> parts = new ArrayList<>();
+		for (String p : paths) {
+			String name = p.substring(p.lastIndexOf('/') + 1);
+			boolean own = name.startsWith(itemId) || itemId.startsWith(name);
+			parts.add(new StudioItem.Part(p, legacyOf(p), own));
+		}
+
+		String block = item instanceof BlockItem bi ? Registries.BLOCK.getId(bi.getBlock()).getPath() : null;
+		return new StudioItem(itemId, StudioItems.OTHER, List.copyOf(parts), List.copyOf(boxes), block);
+	}
+
+	private static float[] vec(JsonElement arr) {
+		if (arr == null || !arr.isJsonArray() || arr.getAsJsonArray().size() != 3) {
+			return null;
+		}
+		float[] v = new float[3];
+		for (int i = 0; i < 3; i++) {
+			JsonElement e = arr.getAsJsonArray().get(i);
+			if (!e.isJsonPrimitive()) {
+				return null;
+			}
+			v[i] = e.getAsFloat();
+		}
+		return v;
+	}
+
+	/** Eine Seite: Bild aufloesen, Teil-Nummer vergeben, Ausschnitt lesen. */
+	private static StudioItem.Face face(JsonObject faces, String side, Map<String, String> textures,
+	                                    List<String> paths, float du1, float dv1, float du2, float dv2) {
+		JsonElement f = faces.get(side);
+		if (f == null || !f.isJsonObject()) {
+			return null;
+		}
+		String tex = faceTexture(faces, side, textures);
+		if (tex == null) {
+			return null;
+		}
+		int part = paths.indexOf(tex);
+		if (part < 0) {
+			paths.add(tex);
+			part = paths.size() - 1;
+		}
+		float[] uv = {du1, dv1, du2, dv2};
+		JsonElement u = f.getAsJsonObject().get("uv");
+		if (u != null && u.isJsonArray() && u.getAsJsonArray().size() == 4) {
+			for (int i = 0; i < 4; i++) {
+				uv[i] = u.getAsJsonArray().get(i).getAsFloat();
+			}
+		}
+		return new StudioItem.Face(part, uv[0], uv[1], uv[2], uv[3]);
+	}
+
+	private static String faceTexture(JsonObject faces, String side, Map<String, String> textures) {
+		JsonElement f = faces.get(side);
+		if (f == null || !f.isJsonObject() || !f.getAsJsonObject().has("texture")) {
+			return null;
+		}
+		return resolve(f.getAsJsonObject().get("texture").getAsString(), textures);
+	}
+
+	/** "#side" -> "block/oak_log" ueber die Bildliste. null, wenn es kein Block-Bild ist. */
+	private static String resolve(String ref, Map<String, String> textures) {
+		String v = ref;
+		for (int i = 0; v != null && v.startsWith("#") && i < 10; i++) {
+			v = textures.get(v.substring(1));
+		}
+		if (v == null || v.startsWith("#")) {
+			return null;
+		}
+		Identifier t = Identifier.tryParse(v);
+		if (t == null || !Identifier.DEFAULT_NAMESPACE.equals(t.getNamespace())) {
+			return null;
+		}
+		return t.getPath().startsWith("block/") ? t.getPath() : null;
 	}
 
 	/**

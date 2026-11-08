@@ -48,5 +48,11 @@
   "resourcepackstudio.clear.title": "Deselect all?",
   "resourcepackstudio.clear.desc.one": "1 item goes back to Vanilla.",
   "resourcepackstudio.clear.desc.many": "%s items go back to Vanilla.",
-  "resourcepackstudio.clear.confirm": "Deselect all"
+  "resourcepackstudio.clear.confirm": "Deselect all",
+  "resourcepackstudio.studio.cat.blocks": "Blocks",
+  "resourcepackstudio.studio.cat.items": "Items",
+  "resourcepackstudio.studio.cat.sounds": "Sounds",
+  "resourcepackstudio.studio.count.sound.one": "1 sound",
+  "resourcepackstudio.studio.count.sound.many": "%s sounds",
+  "resourcepackstudio.sound.volume": "Preview volume"
 }

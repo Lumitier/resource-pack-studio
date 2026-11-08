@@ -50,6 +50,9 @@ public final class PackBuilder {
 
 	public static final int PACK_FORMAT = 75;
 
+	/** Ein zu kopierendes Bild: aus welcher Variante, welcher Eintrag, fuer welches Item. */
+	private record Source(PackScanner.Variant variant, String entry, String item) {}
+
 	/** Ergebnis: entweder Datei und Name, oder ein Fehler. */
 	public record Built(Path file, String name, int textures, String error) {
 		public boolean ok() {
@@ -126,12 +129,36 @@ public final class PackBuilder {
 		// Zielpfad -> Quelle. Teilen sich zwei Items ein Bild (z. B. beide
 		// goldenen Aepfel), gewinnt das spaeter gewaehlte - mehr als ein Bild
 		// pro Pfad kann ein Pack nicht haben.
-		Map<String, PackScanner.Variant> files = new LinkedHashMap<>();
-		Map<String, StudioItem> owners = new LinkedHashMap<>();
+		// Bei Bloecken: jedes Bild, das das Pack hat (Stamm UND
+		// Schnittflaeche). Was das Pack nicht hat, bleibt Vanilla.
+		//
+		// EIGENE Bilder an ihren normalen Pfad. GELIEHENE (Eichentreppe ->
+		// Eichenbretter) an einen eigenen Pfad unter block/rps/<eintrag>/,
+		// dazu eigene Modelle und Blockzustaende, die darauf zeigen. So
+		// aendert eine gewaehlte Treppe nur die Treppe.
+		Map<String, Source> files = new LinkedHashMap<>();
+		Map<StudioItem, Map<String, String>> remaps = new LinkedHashMap<>();
 		for (Map.Entry<StudioItem, PackScanner.Variant> e : sel.entrySet()) {
-			String path = StudioItem.TEXTURES + e.getKey().modern() + ".png";
-			files.put(path, e.getValue());
-			owners.put(path, e.getKey());
+			StudioItem item = e.getKey();
+			List<StudioItem.Part> parts = item.parts();
+			List<String> entries = e.getValue().entries();
+			Map<String, String> remap = new LinkedHashMap<>();
+			for (int i = 0; i < parts.size() && i < entries.size(); i++) {
+				if (entries.get(i) == null) {
+					continue;
+				}
+				String path = parts.get(i).modern();
+				if (!parts.get(i).own()) {
+					String copy = "block/rps/" + item.id() + "/" + path.substring(path.lastIndexOf('/') + 1);
+					remap.put(path, copy);
+					path = copy;
+				}
+				files.put(StudioItem.Part.file(path),
+					new Source(e.getValue(), entries.get(i), item.id()));
+			}
+			if (!remap.isEmpty()) {
+				remaps.put(item, remap);
+			}
 		}
 
 		List<String> credits = new ArrayList<>();
@@ -143,21 +170,30 @@ public final class PackBuilder {
 				put(zip, "pack.png", Files.readAllBytes(icon));
 			}
 
-			for (Map.Entry<String, PackScanner.Variant> e : files.entrySet()) {
-				PackScanner.Variant v = e.getValue();
-				byte[] png = read(v, v.entry());
+			for (Map.Entry<String, Source> e : files.entrySet()) {
+				Source src = e.getValue();
+				PackScanner.Variant v = src.variant();
+				byte[] png = read(v, src.entry());
 				if (png == null) {
 					ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Skipped {} - could not read it from {}",
-						v.entry(), v.pack().name());
+						src.entry(), v.pack().name());
 					continue;
 				}
 				put(zip, e.getKey(), png);
-				byte[] meta = read(v, v.entry() + ".mcmeta");
+				byte[] meta = read(v, src.entry() + ".mcmeta");
 				if (meta != null) {
 					put(zip, e.getKey() + ".mcmeta", meta);
 				}
 				written++;
-				credits.add(owners.get(e.getKey()).id() + "  <-  " + v.pack().name());
+				String file = e.getKey().substring(StudioItem.ASSETS.length());
+				credits.add(src.item() + " (" + file + ")  <-  " + v.pack().name());
+			}
+
+			for (Map.Entry<StudioItem, Map<String, String>> e : remaps.entrySet()) {
+				if (!ModelCopies.write(zip, e.getKey(), e.getValue())) {
+					ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] {}: no model to redirect - "
+						+ "its own textures were copied, but it keeps the vanilla look.", e.getKey().id());
+				}
 			}
 
 			StringBuilder sb = new StringBuilder();
@@ -192,7 +228,7 @@ public final class PackBuilder {
 		return new GsonBuilder().setPrettyPrinting().create().toJson(root);
 	}
 
-	private static void put(ZipOutputStream zip, String name, byte[] data) throws IOException {
+	static void put(ZipOutputStream zip, String name, byte[] data) throws IOException {
 		zip.putNextEntry(new ZipEntry(name));
 		zip.write(data);
 		zip.closeEntry();

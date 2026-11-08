@@ -7,6 +7,8 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -45,8 +47,36 @@ public final class PackScanner {
 	/** Ein gefundenes Pack. prefix ist "" oder der Unterordner in der Zip, mit "/". */
 	public record Pack(String name, Path path, boolean zip, String prefix, String source) {}
 
-	/** Eine Textur eines Items in einem Pack. */
-	public record Variant(Pack pack, String entry, boolean legacy) {}
+	/**
+	 * Was ein Pack fuer einen Eintrag hat.
+	 *
+	 * entries hat genau so viele Plaetze wie das Item Teile hat. null heisst:
+	 * Dieses Bild hat das Pack nicht - dann gilt dort Vanilla. Bei einem
+	 * flachen Item gibt es nur einen Platz.
+	 */
+	public record Variant(Pack pack, List<String> entries, boolean legacy) {
+
+		/** Erster gefundener Eintrag - zum Wiedererkennen nach einer neuen Suche. */
+		public String entry() {
+			for (String e : entries) {
+				if (e != null) {
+					return e;
+				}
+			}
+			return "";
+		}
+
+		/** Wie viele Bilder das Pack fuer diesen Eintrag hat. */
+		public int found() {
+			int n = 0;
+			for (String e : entries) {
+				if (e != null) {
+					n++;
+				}
+			}
+			return n;
+		}
+	}
 
 	/** Ergebnis eines Durchlaufs. */
 	public record Result(List<Pack> packs, Map<StudioItem, List<Variant>> variants,
@@ -139,15 +169,13 @@ public final class PackScanner {
 	// ------------------------------------------------------------------
 
 	private static void index(Pack pack, Map<StudioItem, List<Variant>> variants) throws IOException {
+		// Bei Zips alle Eintraege EINMAL einlesen, dann nur noch nachschlagen.
+		// Kleingeschrieben -> wie es WIRKLICH in der Zip steht: Manche Packs
+		// haben die Gross-/Kleinschreibung falsch, gelesen wird spaeter aber
+		// mit dem echten Namen.
+		Map<String, String> names = null;
 		if (pack.zip()) {
-			// Alle Eintraege EINMAL einlesen, dann nur noch nachschlagen.
-			// Einzeln per getEntry waere bei siebzig Items mal zwei Pfaden
-			// genauso schnell - so ist aber auch Gross-/Kleinschreibung
-			// abgedeckt, die manche Packs falsch haben.
-			// Kleingeschrieben -> wie es WIRKLICH in der Zip steht. Spaeter
-			// wird die Textur per Name gelesen, und Zips unterscheiden
-			// Gross- und Kleinschreibung.
-			Map<String, String> names = new HashMap<>();
+			names = new HashMap<>();
 			try (ZipFile zip = new ZipFile(pack.path().toFile())) {
 				Enumeration<? extends ZipEntry> e = zip.entries();
 				while (e.hasMoreElements()) {
@@ -155,23 +183,31 @@ public final class PackScanner {
 					names.putIfAbsent(n.toLowerCase(Locale.ROOT), n);
 				}
 			}
-			for (Map.Entry<StudioItem, List<Variant>> en : variants.entrySet()) {
-				for (StudioItem.Candidate c : en.getKey().candidates()) {
-					String real = names.get((pack.prefix() + c.path()).toLowerCase(Locale.ROOT));
+		}
+		for (Map.Entry<StudioItem, List<Variant>> en : variants.entrySet()) {
+			List<StudioItem.Part> parts = en.getKey().parts();
+			String[] found = null;
+			boolean legacy = false;
+			for (int i = 0; i < parts.size(); i++) {
+				for (StudioItem.Candidate c : parts.get(i).candidates()) {
+					String real;
+					if (names != null) {
+						real = names.get((pack.prefix() + c.path()).toLowerCase(Locale.ROOT));
+					} else {
+						real = Files.isRegularFile(pack.path().resolve(c.path())) ? c.path() : null;
+					}
 					if (real != null) {
-						en.getValue().add(new Variant(pack, real, c.legacy()));
+						if (found == null) {
+							found = new String[parts.size()];
+						}
+						found[i] = real;
+						legacy |= c.legacy();
 						break;
 					}
 				}
 			}
-		} else {
-			for (Map.Entry<StudioItem, List<Variant>> en : variants.entrySet()) {
-				for (StudioItem.Candidate c : en.getKey().candidates()) {
-					if (Files.isRegularFile(pack.path().resolve(c.path()))) {
-						en.getValue().add(new Variant(pack, c.path(), c.legacy()));
-						break;
-					}
-				}
+			if (found != null) {
+				en.getValue().add(new Variant(pack, Collections.unmodifiableList(Arrays.asList(found)), legacy));
 			}
 		}
 	}

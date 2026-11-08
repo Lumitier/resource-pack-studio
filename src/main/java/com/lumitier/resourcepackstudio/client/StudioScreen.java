@@ -241,6 +241,14 @@ public final class StudioScreen extends ScaledScreen {
 		this.itemKeys = new String[n];
 		for (int i = 0; i < n; i++) {
 			StudioItem it = items.get(i);
+			if (it.sound()) {
+				// Pfad ohne den Gruppenordner: "damage/hit1" -> "hit1".
+				String rel = it.id().substring(StudioItems.SOUND_ID.length());
+				int slash = rel.indexOf('/');
+				itemNames[i] = slash > 0 ? rel.substring(slash + 1) : rel;
+				itemKeys[i] = rel.replace('_', ' ').replace('/', ' ').toLowerCase(Locale.ROOT) + " " + rel;
+				continue;
+			}
 			String key = Registries.ITEM.get(Identifier.ofVanilla(it.id())).getTranslationKey();
 			itemNames[i] = Text.translatable(key).getString();
 			// Name UND Kennung: "gold" findet so auch "Golden Sword".
@@ -268,48 +276,114 @@ public final class StudioScreen extends ScaledScreen {
 		}
 	}
 
+	// ---- Aufklappbare Kategorien -------------------------------------
+	//
+	// Wie bei Mod Menu: oben "Blocks", dann "Items" (spaeter "Sounds"), je
+	// mit Pfeil zum Auf- und Zuklappen. Waehrend gesucht wird, sind alle
+	// offen - sonst saehe man Treffer in zugeklappten Kategorien nicht.
+
+	// Reihenfolge in der Sidebar: Items, Blocks, Sounds.
+	private static final int CAT_ITEMS = 0;
+	private static final int CAT_BLOCKS = 1;
+	private static final int CAT_SOUNDS = 2;
+	private static final int CAT_COUNT = 3;
+
+	/** rowItem-Wert fuer den Kopf einer Kategorie: -10 - Kategorie. */
+	private static final int CAT_ROW = -10;
+
 	/**
-	 * Gruppenkoepfe und Items untereinander, gefiltert nach der Suche.
-	 * Nur neu gebaut, wenn sich der Suchtext aendert - nicht pro Bild.
-	 * Eine Gruppe ohne Treffer verschwindet samt Kopf.
+	 * Offene Kategorien. Bei jedem Oeffnen des Studios ist alles zu - auch
+	 * nach einem Neustart. Ein Fensterwechsel (init) aendert nichts daran.
 	 */
+	private final java.util.Set<Integer> expanded = new java.util.HashSet<>();
+
+	private String[] rowCount = new String[0];
+
+	private static int category(StudioItem it) {
+		return it.sound() ? CAT_SOUNDS : it.cube() ? CAT_BLOCKS : CAT_ITEMS;
+	}
+
+	private static final String[] CAT_KEYS = {
+		"resourcepackstudio.studio.cat.items",
+		"resourcepackstudio.studio.cat.blocks",
+		"resourcepackstudio.studio.cat.sounds"};
+
 	private void buildRows() {
+		buildRows(true);
+	}
+
+	/** "damage" -> "Damage", "entity" -> "Entity". */
+	private static String folderLabel(String folder) {
+		return folder.isEmpty() ? "" : Character.toUpperCase(folder.charAt(0)) + folder.substring(1);
+	}
+
+	/**
+	 * Kategorien, Gruppenkoepfe und Eintraege untereinander, gefiltert nach
+	 * der Suche. Nur neu gebaut, wenn sich etwas aendert - nicht pro Bild.
+	 */
+	private void buildRows(boolean resetScroll) {
 		String q = search.text().trim().toLowerCase(Locale.ROOT);
 		List<String> labels = new ArrayList<>();
+		List<String> counts = new ArrayList<>();
 		List<Integer> idx = new ArrayList<>();
-		String group = null;
-		for (int k = 0; k < order.length; k++) {
-			int i = order[k];
-			StudioItem it = items.get(i);
-			if (!q.isEmpty() && !itemKeys[i].contains(q)) {
+		for (int cat = 0; cat < CAT_COUNT; cat++) {
+			List<Integer> hits = new ArrayList<>();
+			for (int k = 0; k < order.length; k++) {
+				int i = order[k];
+				if (category(items.get(i)) == cat && (q.isEmpty() || itemKeys[i].contains(q))) {
+					hits.add(i);
+				}
+			}
+			if (hits.isEmpty() && !q.isEmpty()) {
 				continue;
 			}
-			if (!it.group().equals(group)) {
-				group = it.group();
-				labels.add(Text.translatable("resourcepackstudio.studio.group." + group).getString());
-				idx.add(-1);
+			labels.add(Text.translatable(CAT_KEYS[cat]).getString());
+			counts.add(Integer.toString(hits.size()));
+			idx.add(CAT_ROW - cat);
+			if (q.isEmpty() && !expanded.contains(cat)) {
+				continue;
 			}
-			labels.add(null);
-			idx.add(i);
+			// Gruppenkoepfe bei Items (Schwerter, Aexte ... Weitere) und
+			// Sounds (Ordner: damage, entity, random ...).
+			String group = null;
+			for (int i : hits) {
+				StudioItem it = items.get(i);
+				if (cat != CAT_BLOCKS && !it.group().equals(group)) {
+					group = it.group();
+					labels.add(cat == CAT_SOUNDS
+						? folderLabel(group.substring(StudioItems.SOUND_GROUP.length()))
+						: Text.translatable("resourcepackstudio.studio.group." + group).getString());
+					counts.add(null);
+					idx.add(-1);
+				}
+				labels.add(null);
+				counts.add(null);
+				idx.add(i);
+			}
 		}
 		int n = labels.size();
 		this.rowLabel = labels.toArray(new String[0]);
+		this.rowCount = counts.toArray(new String[0]);
 		this.rowItem = new int[n];
 		this.rowY = new int[n];
 		this.rowH = new int[n];
 		int y = 0;
 		for (int i = 0; i < n; i++) {
 			rowItem[i] = idx.get(i);
-			// Vor jeder Gruppe ausser der ersten etwas Luft.
-			if (rowItem[i] < 0 && i > 0) {
+			// Luft vor jeder Kategorie ausser der ersten, etwas weniger vor Gruppen.
+			if (i > 0 && rowItem[i] <= CAT_ROW) {
+				y += 6;
+			} else if (i > 0 && rowItem[i] == -1 && rowItem[i - 1] > CAT_ROW) {
 				y += 4;
 			}
 			rowY[i] = y;
-			rowH[i] = rowItem[i] < 0 ? GROUP_H : Metrics.ROW_H;
+			rowH[i] = rowItem[i] == -1 ? GROUP_H : Metrics.ROW_H;
 			y += rowH[i];
 		}
 		this.sideHeight = y;
-		this.sideScroll = 0;
+		if (resetScroll) {
+			this.sideScroll = 0;
+		}
 	}
 
 	/** Nach einer neuen Suche: Varianten und Zaehler neu holen. */
@@ -341,11 +415,11 @@ public final class StudioScreen extends ScaledScreen {
 			packs, StudioIndex.selectionCount()).getString();
 		this.createLabel = Text.translatable("resourcepackstudio.create.button").getString();
 
-		this.headerTitle = itemNames[selected];
+		StudioItem cur = items.get(selected);
+		this.headerTitle = cur.sound() ? cur.id().substring(StudioItems.SOUND_ID.length()) : itemNames[selected];
 		int n = variants.length > selected ? variants[selected].size() : 0;
-		this.headerCount = Text.translatable(n == 1
-			? "resourcepackstudio.studio.count.one"
-			: "resourcepackstudio.studio.count.many", n).getString();
+		String key = cur.sound() ? "resourcepackstudio.studio.count.sound" : "resourcepackstudio.studio.count";
+		this.headerCount = Text.translatable(key + (n == 1 ? ".one" : ".many"), n).getString();
 
 		// Karte 0 ist Vanilla, danach die Packs.
 		int tw = colW - CARD_PAD * 2;
@@ -381,6 +455,7 @@ public final class StudioScreen extends ScaledScreen {
 	@Override
 	public void removed() {
 		Textures.clear();
+		SoundPreview.stop();
 		icon.clear();
 		lastItem = items.get(selected).id();
 	}
@@ -722,6 +797,11 @@ public final class StudioScreen extends ScaledScreen {
 				continue;
 			}
 			int item = rowItem[i];
+			if (item <= CAT_ROW) {
+				drawCategoryRow(ctx, i, CAT_ROW - item, x, ry, w,
+					inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H));
+				continue;
+			}
 			if (item < 0) {
 				Ui.drawTop(ctx, this.textRenderer, Ui.small(rowLabel[i]),
 					x, ry + GROUP_H - Ui.SMALL_H - 4, Ui.TOP_SMALL, Theme.TEXT_FAINT);
@@ -737,6 +817,36 @@ public final class StudioScreen extends ScaledScreen {
 		ctx.disableScissor();
 	}
 
+	/** Kopf einer Kategorie: Pfeil, fetter Name, rechts die Anzahl. */
+	private void drawCategoryRow(DrawContext ctx, int row, int cat, int x, int y, int w, boolean hover) {
+		if (hover) {
+			Surface.row(ctx, x - 4, y, w + 8, Metrics.ROW_H, Theme.ROW_HOVER);
+		}
+		boolean open = !search.text().isBlank() || expanded.contains(cat);
+		// Pfeil aus Linien: zu = nach rechts, offen = nach unten. Genau
+		// auf der Mitte der Zeile (Hoehe 21: Mitte zwischen Pixel 10 und 11).
+		int top = y + (Metrics.ROW_H - 9) / 2;
+		if (open) {
+			for (int i = 0; i < 5; i++) {
+				ctx.fill(x + i, top + 2 + i, x + 9 - i, top + 3 + i, Theme.TEXT_MUTED);
+			}
+		} else {
+			for (int i = 0; i < 5; i++) {
+				ctx.fill(x + 2 + i, top + i, x + 3 + i, top + 9 - i, Theme.TEXT_MUTED);
+			}
+		}
+		// drawCenteredIn: gleich viel Luft ueber und unter der Schrift -
+		// wie "All Mods" im Hub. drawCenteredLine richtet nach der
+		// Schreiblinie aus, das sass hier sichtbar zu tief.
+		String count = rowCount[row] == null ? "" : rowCount[row];
+		int cw = Ui.widthSmall(this.textRenderer, count);
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(count), x + w - cw, y, Metrics.ROW_H,
+			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+		Ui.drawCenteredIn(ctx, this.textRenderer,
+			Ui.bold(Ui.fitBold(this.textRenderer, rowLabel[row], w - 14 - cw - 6)), x + 14, y, Metrics.ROW_H,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
+	}
+
 	private void drawItemRow(DrawContext ctx, int item, int x, int y, int w, boolean hover) {
 		boolean sel = item == selected;
 		if (sel) {
@@ -746,9 +856,9 @@ public final class StudioScreen extends ScaledScreen {
 		}
 		int mid = y + Metrics.ROW_H / 2;
 
-		Textures.Tex t = Textures.vanilla(items.get(item));
-		if (t != null) {
-			drawTex(ctx, t, x, mid - ITEM_ICON / 2, ITEM_ICON);
+		boolean snd = items.get(item).sound();
+		if (!snd) {
+			drawPreview(ctx, items.get(item), null, x, mid - ITEM_ICON / 2, ITEM_ICON);
 		}
 
 		// Rechts: Anzahl der Varianten, davor ein Punkt, wenn eine
@@ -767,7 +877,7 @@ public final class StudioScreen extends ScaledScreen {
 			right -= 8;
 		}
 
-		int tx = x + ITEM_ICON + Metrics.ROW_ICON_GAP;
+		int tx = snd ? x + 4 : x + ITEM_ICON + Metrics.ROW_ICON_GAP;
 		String label = Ui.fit(this.textRenderer, itemNames[item], right - tx - 2);
 		Ui.drawCenteredLine(ctx, this.textRenderer, Ui.text(label), tx, mid,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, sel ? Theme.TEXT : Theme.TEXT_MUTED);
@@ -820,40 +930,97 @@ public final class StudioScreen extends ScaledScreen {
 		int rows = (cards + cols - 1) / cols;
 		int extra = vs.isEmpty() ? Ui.advance(Ui.BODY_H, Ui.BODY_D, 0) + 12 : 0;
 		this.contentHeight = rows * (CARD_H + CARD_GAP) + extra;
-		int maxScroll = Math.max(0, contentHeight - (listBottom - listTop));
+		int gt = gridTop();
+		int maxScroll = Math.max(0, contentHeight - (listBottom - gt));
 		if (scroll > maxScroll) {
 			scroll = maxScroll;
 		}
 
 		StudioItem item = items.get(selected);
 		PackScanner.Variant chosen = StudioIndex.selected(item);
-		boolean inList = mouseY >= listTop && mouseY < listBottom;
+		boolean inList = mouseY >= gt && mouseY < listBottom;
 
-		ctx.enableScissor(cx, listTop, cx + cw, listBottom);
-		Sdf.clip(new ScreenRect(cx, listTop, cw, listBottom - listTop));
+		if (item.sound()) {
+			renderVolume(ctx, mouseX, mouseY);
+		}
+
+		ctx.enableScissor(cx, gt, cx + cw, listBottom);
+		Sdf.clip(new ScreenRect(cx, gt, cw, listBottom - gt));
 		for (int i = 0; i < cards; i++) {
 			int bx = cx + (i % cols) * (colW + CARD_GAP);
-			int by = listTop + (i / cols) * (CARD_H + CARD_GAP) - scroll;
-			if (by + CARD_H < listTop || by > listBottom) {
+			int by = gt + (i / cols) * (CARD_H + CARD_GAP) - scroll;
+			if (by + CARD_H < gt || by > listBottom) {
 				continue;
 			}
 			PackScanner.Variant v = i == 0 ? null : vs.get(i - 1);
 			boolean isChosen = v == chosen;
 			boolean hover = inList && Draw.inside(mouseX, mouseY, bx, by, colW, CARD_H);
-			Textures.Tex t = v == null ? Textures.vanilla(item) : Textures.variant(v);
-			drawCard(ctx, bx, by, t, i < cardNames.length ? cardNames[i] : "", isChosen, hover);
+			drawCard(ctx, bx, by, item, v, i < cardNames.length ? cardNames[i] : "", isChosen, hover);
 		}
 		if (vs.isEmpty()) {
 			Ui.drawTop(ctx, this.textRenderer,
 				Ui.text(Ui.fit(this.textRenderer, emptyLabel, cw)),
-				cx, listTop + CARD_H + CARD_GAP + 6 - scroll, Ui.TOP_BODY, Theme.TEXT_FAINT);
+				cx, gt + CARD_H + CARD_GAP + 6 - scroll, Ui.TOP_BODY, Theme.TEXT_FAINT);
 		}
 		Sdf.clip(null);
 		ctx.disableScissor();
 	}
 
-	private void drawCard(DrawContext ctx, int x, int y, Textures.Tex t, String name,
-	                      boolean chosen, boolean hover) {
+	// ---- Lautstaerke der Sound-Vorschau ---------------------------------
+
+	private static final int VOL_ROW = 26;
+	private static final int VOL_TRACK_W = 140;
+	private int volTrackX, volY;
+	private boolean volDragging;
+
+	/** Oberkante der Karten: bei Sounds unter der Lautstaerke-Zeile. */
+	private int gridTop() {
+		return !items.isEmpty() && items.get(selected).sound() ? listTop + VOL_ROW : listTop;
+	}
+
+	/** "Preview volume" mit Schieber, 0 bis 200 %. */
+	private void renderVolume(DrawContext ctx, int mouseX, int mouseY) {
+		String label = Text.translatable("resourcepackstudio.sound.volume").getString();
+		int h = 20;
+		this.volY = listTop;
+		int mid = volY + h / 2;
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(label), cx, volY, h,
+			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_MUTED);
+		this.volTrackX = cx + Ui.widthSmall(this.textRenderer, label) + 12;
+		float f = SoundPreview.volume() / SoundPreview.MAX_VOLUME;
+		int filled = Math.round(VOL_TRACK_W * f);
+		Draw.roundedRect(ctx, volTrackX, mid - 2, VOL_TRACK_W, 4, 2, Theme.TOGGLE_OFF);
+		Draw.roundedRect(ctx, volTrackX, mid - 2, Math.max(4, filled), 4, 2, Theme.TOGGLE_ON);
+		boolean hover = volDragging || Draw.inside(mouseX, mouseY, volTrackX - 6, volY, VOL_TRACK_W + 12, h);
+		Draw.dot(ctx, volTrackX + filled, mid, hover ? 6 : 5, 0xFFFFFFFF);
+		Draw.dot(ctx, volTrackX + filled, mid, hover ? 4 : 3, Theme.TOGGLE_ON);
+		String pct = Math.round(SoundPreview.volume() * 100) + " %";
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(pct), volTrackX + VOL_TRACK_W + 12, volY, h,
+			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_MUTED);
+	}
+
+	private void setVolumeFromMouse(double mx) {
+		float f = (float) ((mx - volTrackX) / VOL_TRACK_W);
+		SoundPreview.setVolume(Math.max(0.0F, Math.min(1.0F, f)) * SoundPreview.MAX_VOLUME);
+	}
+
+	@Override
+	protected boolean scaledMouseDragged(Click click, double dx, double dy) {
+		if (volDragging) {
+			setVolumeFromMouse(click.x());
+			return true;
+		}
+		return super.scaledMouseDragged(click, dx, dy);
+	}
+
+	@Override
+	protected boolean scaledMouseReleased(Click click) {
+		volDragging = false;
+		return super.scaledMouseReleased(click);
+	}
+
+	private void drawCard(DrawContext ctx, int x, int y, StudioItem item, PackScanner.Variant v,
+	                      String name, boolean chosen, boolean hover) {
 		Surface.shadowCard(ctx, x, y, colW, CARD_H, 3, 2, Theme.SHADOW_CARD);
 		int fill = chosen ? Theme.ROW_SELECTED : (hover ? Theme.CARD_HOVER : Theme.CARD);
 		if (!Surface.glassCard(ctx, x, y, colW, CARD_H, fill)) {
@@ -865,9 +1032,7 @@ public final class StudioScreen extends ScaledScreen {
 
 		int ix = x + (colW - PREVIEW) / 2;
 		int iy = y + CARD_PAD;
-		if (t != null) {
-			drawTex(ctx, t, ix, iy, PREVIEW);
-		}
+		drawPreview(ctx, item, v, ix, iy, PREVIEW);
 
 		int nw = Ui.widthSmall(this.textRenderer, name);
 		Ui.drawTop(ctx, this.textRenderer, Ui.small(name),
@@ -876,13 +1041,126 @@ public final class StudioScreen extends ScaledScreen {
 	}
 
 	/**
-	 * Zeichnet eine Textur quadratisch. Animierte Texturen sind Einzelbilder
-	 * untereinander - gezeigt wird nur das erste.
+	 * Vorschau eines Eintrags: flach als Bild, ein Block als Wuerfel.
+	 *
+	 * @param v Variante aus einem Pack, oder null fuer Vanilla. Hat das Pack
+	 *          einen Teil nicht (oder ist er fremd, siehe Part.own), wird
+	 *          dort das Vanilla-Bild gezeigt - genau so saehe es im Spiel aus.
 	 */
-	private static void drawTex(DrawContext ctx, Textures.Tex t, int x, int y, int size) {
+	private static void drawPreview(DrawContext ctx, StudioItem item, PackScanner.Variant v,
+	                                int x, int y, int size) {
+		if (item.sound()) {
+			drawPlay(ctx, x, y, size);
+			return;
+		}
+		if (!item.cube()) {
+			Textures.Tex t = tex(item, v, 0);
+			if (t != null) {
+				int frame = Math.min(t.w(), t.h());
+				ctx.drawTexture(RenderPipelines.GUI_TEXTURED, t.id(), x, y, 0.0F, 0.0F,
+					size, size, frame, frame, t.w(), t.h());
+			}
+			return;
+		}
+		// Blockmodell wie im Inventar, aus seinen Quadern. Projektion:
+		// Norden links, Osten rechts, oben oben. Ein voller Wuerfel fuellt
+		// genau size x size.
+		for (StudioItem.Box b : item.boxes()) {
+			float k = size / 32.0F;
+			float dx = b.x2() - b.x1();
+			float dy = b.y2() - b.y1();
+			float dz = b.z2() - b.z1();
+			float ox = px(x, size, b.x1(), b.z1());
+			float oy = py(y, size, b.x1(), b.y2(), b.z1());
+			if (b.up() != null) {
+				// Ecke hinten links (z2) als Ursprung, zweite Richtung nach
+				// Norden. Andersherum waere die Flaeche gespiegelt - und
+				// gespiegelte Flaechen wirft Minecraft beim Zeichnen weg
+				// (deshalb fehlte die Oberseite).
+				float tx = px(x, size, b.x1(), b.z2());
+				float ty = py(y, size, b.x1(), b.y2(), b.z2());
+				face(ctx, tex(item, v, b.up().part()), b.up(), tx, ty,
+					dx * k, dx * k / 2, -dz * k, dz * k / 2, 0xFFFFFFFF);
+			}
+			if (b.north() != null) {
+				face(ctx, tex(item, v, b.north().part()), b.north(), ox, oy,
+					dx * k, dx * k / 2, 0, dy * k, 0xFFCFCFCF);
+			}
+			if (b.east() != null) {
+				float ex = px(x, size, b.x2(), b.z1());
+				float ey = py(y, size, b.x2(), b.y2(), b.z1());
+				face(ctx, tex(item, v, b.east().part()), b.east(), ex, ey,
+					dz * k, -dz * k / 2, 0, dy * k, 0xFFA8A8A8);
+			}
+		}
+	}
+
+	/** Bildschirm-x eines Modellpunkts (x Osten, z Sueden). */
+	private static float px(int x0, int size, float x, float z) {
+		return x0 + size / 2.0F + (z - 16 + x) * size / 32.0F;
+	}
+
+	/** Bildschirm-y eines Modellpunkts. */
+	private static float py(int y0, int size, float x, float y, float z) {
+		return y0 + size / 2.0F - (16 - x + z) * size / 64.0F + (16 - y) * size / 32.0F;
+	}
+
+	/** Abspielknopf: helle Flaeche mit Dreieck. Ein Klick auf die Karte waehlt und spielt. */
+	private static void drawPlay(DrawContext ctx, int x, int y, int size) {
+		int d = size - 8;
+		int bx = x + 4;
+		int by = y + 4;
+		if (!Surface.glassCard(ctx, bx, by, d, d, Theme.FIELD_FOCUS)) {
+			Surface.row(ctx, bx, by, d, d, Theme.FIELD_FOCUS);
+		}
+		// Dreieck nach rechts, Spalte fuer Spalte.
+		int th = d / 2;
+		int tx = bx + d / 2 - th / 4;
+		int midY = by + d / 2;
+		for (int i = 0; i < th / 2 + 1; i++) {
+			int half = th / 2 - i;
+			ctx.fill(tx + i, midY - half, tx + i + 1, midY + half + 1, Theme.TEXT);
+		}
+	}
+
+	private static Textures.Tex tex(StudioItem item, PackScanner.Variant v, int part) {
+		if (v != null && part < v.entries().size() && v.entries().get(part) != null) {
+			Textures.Tex t = Textures.variant(v, part);
+			// Laedt noch: lieber kurz Vanilla als ein Loch in der Vorschau.
+			return t != null ? t : Textures.vanilla(item, part);
+		}
+		return Textures.vanilla(item, part);
+	}
+
+	/** Wiederverwendet - keine neue Matrix pro Flaeche und Bild. */
+	private static final org.joml.Matrix3x2f FACE = new org.joml.Matrix3x2f();
+
+	/**
+	 * Eine Seite eines Quaders: der Bildausschnitt der Seite, verzerrt auf
+	 * origin + u*(ax,ay) + v*(bx,by). Gezeichnet wird ein 16x16-Quadrat,
+	 * daher /16. Animierte Bilder: nur das erste Einzelbild.
+	 */
+	private static void face(DrawContext ctx, Textures.Tex t, StudioItem.Face f, float ox, float oy,
+	                         float ax, float ay, float bx, float by, int color) {
+		if (t == null) {
+			return;
+		}
 		int frame = Math.min(t.w(), t.h());
-		ctx.drawTexture(RenderPipelines.GUI_TEXTURED, t.id(), x, y, 0.0F, 0.0F,
-			size, size, frame, frame, t.w(), t.h());
+		float uMin = Math.min(f.u1(), f.u2());
+		float vMin = Math.min(f.v1(), f.v2());
+		int u = Math.round(uMin / 16.0F * t.w());
+		int vv = Math.round(vMin / 16.0F * frame);
+		int rw = Math.round(Math.abs(f.u2() - f.u1()) / 16.0F * t.w());
+		int rh = Math.round(Math.abs(f.v2() - f.v1()) / 16.0F * frame);
+		if (rw <= 0 || rh <= 0) {
+			return;
+		}
+		ctx.getMatrices().pushMatrix();
+		FACE.set(ax / 16.0F, ay / 16.0F, bx / 16.0F, by / 16.0F, ox, oy);
+		ctx.getMatrices().mul(FACE);
+		ctx.drawTexture(RenderPipelines.GUI_TEXTURED, t.id(), 0, 0, u, vv,
+			16, 16, rw, rh, t.w(), t.h(), color);
+		ctx.getMatrices().popMatrix();
 	}
 
 	// ------------------------------------------------------------------
@@ -923,10 +1201,25 @@ public final class StudioScreen extends ScaledScreen {
 			int x = sx + Metrics.PAD;
 			int w = sw - Metrics.PAD * 2;
 			for (int i = 0; i < rowItem.length; i++) {
+				int ry = sideTop + rowY[i] - sideScroll;
+				if (rowItem[i] <= CAT_ROW) {
+					// Kategorie auf- oder zuklappen. Waehrend einer Suche ist
+					// alles offen - dann bewirkt der Klick nichts.
+					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
+						if (search.text().isBlank()) {
+							int cat = CAT_ROW - rowItem[i];
+							if (!expanded.remove(cat)) {
+								expanded.add(cat);
+							}
+							buildRows(false);
+						}
+						return true;
+					}
+					continue;
+				}
 				if (rowItem[i] < 0) {
 					continue;
 				}
-				int ry = sideTop + rowY[i] - sideScroll;
 				if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
 					if (selected != rowItem[i]) {
 						selected = rowItem[i];
@@ -954,14 +1247,33 @@ public final class StudioScreen extends ScaledScreen {
 		}
 
 		// Karten
-		if (StudioIndex.result() != null && Draw.inside(mx, my, cx, listTop, cw, listBottom - listTop)) {
+		// Lautstaerke-Schieber (nur bei Sounds)
+		if (StudioIndex.result() != null && items.get(selected).sound()
+				&& Draw.inside(mx, my, volTrackX - 6, volY, VOL_TRACK_W + 12, 20)) {
+			volDragging = true;
+			setVolumeFromMouse(mx);
+			return true;
+		}
+
+		int gt = gridTop();
+		if (StudioIndex.result() != null && Draw.inside(mx, my, cx, gt, cw, listBottom - gt)) {
 			List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
 			int cards = vs.size() + 1;
 			for (int i = 0; i < cards; i++) {
 				int bx = cx + (i % cols) * (colW + CARD_GAP);
-				int by = listTop + (i / cols) * (CARD_H + CARD_GAP) - scroll;
+				int by = gt + (i / cols) * (CARD_H + CARD_GAP) - scroll;
 				if (Draw.inside(mx, my, bx, by, colW, CARD_H)) {
-					StudioIndex.select(items.get(selected), i == 0 ? null : vs.get(i - 1));
+					StudioItem cur = items.get(selected);
+					PackScanner.Variant v = i == 0 ? null : vs.get(i - 1);
+					// Sound: Klick waehlt UND spielt ab - egal wo auf der Karte.
+					if (cur.sound()) {
+						if (v == null) {
+							SoundPreview.playVanilla(cur);
+						} else {
+							SoundPreview.playVariant(v);
+						}
+					}
+					StudioIndex.select(cur, v);
 					refreshLabels();
 					return true;
 				}
@@ -981,7 +1293,7 @@ public final class StudioScreen extends ScaledScreen {
 			sideScroll = Math.max(0, Math.min(max, sideScroll - step));
 			return true;
 		}
-		int max = Math.max(0, contentHeight - (listBottom - listTop));
+		int max = Math.max(0, contentHeight - (listBottom - gridTop()));
 		scroll = Math.max(0, Math.min(max, scroll - step));
 		return true;
 	}

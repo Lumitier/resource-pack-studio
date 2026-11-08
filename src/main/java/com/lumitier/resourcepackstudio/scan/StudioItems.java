@@ -29,6 +29,10 @@ public final class StudioItems {
 	public static final String UTILITY = "utility";
 	/** Alle uebrigen Items - werden im Spiel ermittelt, siehe ItemDiscovery. */
 	public static final String OTHER = "other";
+	/** Gruppe eines Sounds: "sound/" + oberster Ordner ("sound/damage"). */
+	public static final String SOUND_GROUP = "sound/";
+	/** Kennung eines Sounds: "sound:" + Pfad ohne sounds/ und .ogg ("sound:damage/hit1"). */
+	public static final String SOUND_ID = "sound:";
 
 	private static final List<StudioItem> ALL = build();
 
@@ -68,7 +72,7 @@ public final class StudioItems {
 		l.add(item("golden_apple", COMBAT, "apple_golden"));
 		l.add(item("bow", COMBAT, "bow_standby"));
 		l.add(item("arrow", COMBAT, "arrow"));
-		l.add(new StudioItem("crossbow", COMBAT, "item/crossbow_standby", List.of()));
+		l.add(StudioItem.flat("crossbow", COMBAT, "item/crossbow_standby", List.of()));
 		l.add(item("potion", COMBAT, "potion_bottle_drinkable"));
 		l.add(item("splash_potion", COMBAT, "potion_bottle_splash"));
 		l.add(item("lingering_potion", COMBAT));
@@ -98,6 +102,6 @@ public final class StudioItems {
 		for (String l : legacy) {
 			old.add("items/" + l);
 		}
-		return new StudioItem(id, group, "item/" + id, List.copyOf(old));
+		return StudioItem.flat(id, group, "item/" + id, List.copyOf(old));
 	}
 }
