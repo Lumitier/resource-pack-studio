@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "resourcepackstudio",
+  "version": "${version}",
+  "name": "Resource Pack Studio",
+  "description": "Browse every texture your resource packs have for an item, pick your favourites and build your own pack from them.",
+  "authors": [
+    "Lumitier"
+  ],
+  "contact": {
+    "homepage": "https://modrinth.com/mod/resource-pack-studio",
+    "sources": "https://github.com/Lumitier/resource-pack-studio",
+    "issues": "https://github.com/Lumitier/resource-pack-studio/issues"
+  },
+  "license": "Apache-2.0",
+  "icon": "assets/resourcepackstudio/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.lumitier.resourcepackstudio.client.ResourcePackStudioClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*",
+    "lumilib": ">=1.4.1"
+  }
+}
