@@ -72,10 +72,23 @@ public record StudioItem(String id, String group, List<Part> parts, List<Box> bo
 	                  Face up, Face north, Face east) {}
 
 	/**
-	 * Eine Seite: welcher Teil, welcher Ausschnitt des Bildes (0 bis 16).
-	 * null in Box heisst: Diese Seite hat das Modell nicht.
+	 * Eine Seite: welcher Teil, welcher Ausschnitt des Bildes (0 bis 16,
+	 * unabhaengig von der Aufloesung). null in Box heisst: Diese Seite hat
+	 * das Modell nicht. turn: Ausschnitt in Vierteldrehungen gedreht (0 bis
+	 * 3) - Bett-Seiten liegen im Bild quer bzw. auf dem Kopf.
+	 * tint: "tintindex" aus dem Modell, -1 ohne. Gras und Blaetter sind im
+	 * Bild grau und werden erst beim Zeichnen eingefaerbt.
 	 */
-	public record Face(int part, float u1, float v1, float u2, float v2) {}
+	public record Face(int part, float u1, float v1, float u2, float v2, int turn, int tint) {
+
+		public Face(int part, float u1, float v1, float u2, float v2, int turn) {
+			this(part, u1, v1, u2, v2, turn, -1);
+		}
+
+		public Face(int part, float u1, float v1, float u2, float v2) {
+			this(part, u1, v1, u2, v2, 0, -1);
+		}
+	}
 
 	/** Flaches Item mit einem Bild. */
 	public static StudioItem flat(String id, String group, String modern, List<String> legacy) {

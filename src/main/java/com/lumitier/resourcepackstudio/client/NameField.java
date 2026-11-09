@@ -38,21 +38,36 @@ final class NameField {
 		if (!Surface.glassCard(ctx, x, y, w, h, Theme.FIELD_FOCUS)) {
 			Surface.row(ctx, x, y, w, h, Theme.FIELD_FOCUS);
 		}
+		drawText(ctx, tr, x, y, w, h, Theme.TEXT, Theme.TEXT_FAINT);
+	}
+
+	/** Mit eigenen Farben - fuer den dunklen Dialog. Flaeche: deckend, kein Glas. */
+	void render(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h,
+	            int edge, int fill, int textColour, int placeholderColour) {
+		Surface.row(ctx, x - 1, y - 1, w + 2, h + 2, edge);
+		Surface.row(ctx, x, y, w, h, fill);
+		drawText(ctx, tr, x, y, w, h, textColour, placeholderColour);
+	}
+
+	private void drawText(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h,
+	                      int textColour, int placeholderColour) {
 		int tx = x + 8;
 		int mid = y + h / 2;
 		int room = w - 16;
 		if (text.length() == 0) {
 			Ui.drawCenteredLine(ctx, tr, Ui.text(Ui.fit(tr, placeholder, room)),
-				tx, mid, Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT_FAINT);
+				tx, mid, Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, placeholderColour);
+			// Cursor VOR dem Platzhalter - der Platzhalter ist kein Text.
 		} else {
 			String shown = Ui.fit(tr, text.toString(), room);
 			Ui.drawCenteredLine(ctx, tr, Ui.text(shown),
-				tx, mid, Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
+				tx, mid, Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, textColour);
 			tx += Ui.width(tr, shown);
 		}
 		if ((System.currentTimeMillis() / 500) % 2 == 0) {
-			Draw.vLine(ctx, Math.min(tx + 1, x + w - 8),
-				mid - (Ui.BODY_H + Ui.BODY_D) / 2, Ui.BODY_H + Ui.BODY_D, Theme.TEXT);
+			int cx = text.length() == 0 ? x + 6 : Math.min(tx + 1, x + w - 8);
+			Draw.vLine(ctx, cx,
+				mid - (Ui.BODY_H + Ui.BODY_D) / 2, Ui.BODY_H + Ui.BODY_D, textColour);
 		}
 	}
 

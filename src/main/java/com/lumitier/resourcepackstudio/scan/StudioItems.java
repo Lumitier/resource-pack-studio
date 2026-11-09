@@ -29,6 +29,10 @@ public final class StudioItems {
 	public static final String UTILITY = "utility";
 	/** Alle uebrigen Items - werden im Spiel ermittelt, siehe ItemDiscovery. */
 	public static final String OTHER = "other";
+	/** Getragene Ruestung - wie sie am Koerper aussieht, nicht im Inventar. */
+	public static final String WORN = "worn";
+	/** Kennung getragener Ruestung: "worn:" + Vanilla-Item ("worn:diamond_helmet"). Gruppe "worn/<material>". */
+	public static final String WORN_ID = "worn:";
 	/** Gruppe eines Sounds: "sound/" + oberster Ordner ("sound/damage"). */
 	public static final String SOUND_GROUP = "sound/";
 	/** Kennung eines Sounds: "sound:" + Pfad ohne sounds/ und .ogg ("sound:damage/hit1"). */
@@ -58,7 +62,11 @@ public final class StudioItems {
 		// Ruestung: Gold hiess "gold_", Kette hiess schon "chainmail_".
 		String[] pieces = {"helmet", "chestplate", "leggings", "boots"};
 		for (String p : pieces) {
-			l.add(item("leather_" + p, ARMOR, "leather_" + p));
+			// Leder: Grundbild (im Spiel eingefaerbt) + Overlay darueber.
+			l.add(new StudioItem("leather_" + p, ARMOR, List.of(
+				new StudioItem.Part("item/leather_" + p, List.of("items/leather_" + p), true),
+				new StudioItem.Part("item/leather_" + p + "_overlay", List.of("items/leather_" + p + "_overlay"), true)),
+				null, null));
 			l.add(item("chainmail_" + p, ARMOR, "chainmail_" + p));
 			l.add(item("copper_" + p, ARMOR));
 			l.add(item("iron_" + p, ARMOR, "iron_" + p));
@@ -66,6 +74,42 @@ public final class StudioItems {
 			l.add(item("diamond_" + p, ARMOR, "diamond_" + p));
 			l.add(item("netherite_" + p, ARMOR));
 		}
+
+		// Getragene Ruestung - je Teil ein Eintrag (Helm, Brust, Hose,
+		// Schuhe). Seit 1.21.2 unter entity/equipment/, davor (auch in 1.8)
+		// unter models/armor/<material>_layer_1 bzw. _layer_2 fuer die Hose.
+		// Helm, Brust und Schuhe liegen in EINEM Bild (Lage 1) - beim
+		// Erstellen setzt WornComposer es aus den gewaehlten Packs zusammen.
+		String[][] worn = {
+			// Material im Pfad, alter Name, Item-Vorsilbe
+			{"leather", "leather", "leather"}, {"chainmail", "chainmail", "chainmail"},
+			{"copper", null, "copper"}, {"iron", "iron", "iron"}, {"gold", "gold", "golden"},
+			{"diamond", "diamond", "diamond"}, {"netherite", "netherite", "netherite"}};
+		for (String[] m : worn) {
+			String group = WORN + "/" + m[0];
+			List<StudioItem.Part> layer1 = new ArrayList<>();
+			List<StudioItem.Part> layer2 = new ArrayList<>();
+			layer1.add(wornPart("humanoid/" + m[0], m[1] == null ? null : m[1] + "_layer_1"));
+			layer2.add(wornPart("humanoid_leggings/" + m[0], m[1] == null ? null : m[1] + "_layer_2"));
+			if (m[0].equals("leather")) {
+				layer1.add(wornPart("humanoid/leather_overlay", "leather_layer_1_overlay"));
+				layer2.add(wornPart("humanoid_leggings/leather_overlay", "leather_layer_2_overlay"));
+			}
+			l.add(new StudioItem(WORN_ID + m[2] + "_helmet", group, List.copyOf(layer1),
+				wornBoxes(m[0], EntityModels.Piece.HELMET), null));
+			l.add(new StudioItem(WORN_ID + m[2] + "_chestplate", group, List.copyOf(layer1),
+				wornBoxes(m[0], EntityModels.Piece.CHESTPLATE), null));
+			l.add(new StudioItem(WORN_ID + m[2] + "_leggings", group, List.copyOf(layer2),
+				wornBoxes(m[0], EntityModels.Piece.LEGGINGS), null));
+			l.add(new StudioItem(WORN_ID + m[2] + "_boots", group, List.copyOf(layer1),
+				wornBoxes(m[0], EntityModels.Piece.BOOTS), null));
+		}
+		l.add(new StudioItem(WORN_ID + "turtle_helmet", WORN + "/turtle",
+			List.of(wornPart("humanoid/turtle_scute", "turtle_layer_1")),
+			EntityModels.armor(EntityModels.Piece.HELMET, 0), null));
+		// Elytra: seit 1.9 unter entity/elytra.png. Vorschau als Bogen.
+		l.add(new StudioItem(WORN_ID + "elytra", WORN + "/elytra", List.of(new StudioItem.Part(
+			"entity/equipment/wings/elytra", List.of("entity/elytra"), true)), null, null));
 
 		// Kampf
 		l.add(item("ender_pearl", COMBAT, "ender_pearl"));
@@ -95,6 +139,16 @@ public final class StudioItems {
 		l.add(item("shears", UTILITY, "shears"));
 
 		return Collections.unmodifiableList(l);
+	}
+
+	private static StudioItem.Part wornPart(String modern, String legacyName) {
+		return new StudioItem.Part("entity/equipment/" + modern,
+			legacyName == null ? List.of() : List.of("models/armor/" + legacyName), true);
+	}
+
+	/** Leder hat ein Overlay - dessen Quader liegen direkt auf den Grundquadern. */
+	private static List<StudioItem.Box> wornBoxes(String material, EntityModels.Piece piece) {
+		return material.equals("leather") ? EntityModels.armorWithOverlay(piece) : EntityModels.armor(piece, 0);
 	}
 
 	private static StudioItem item(String id, String group, String... legacy) {

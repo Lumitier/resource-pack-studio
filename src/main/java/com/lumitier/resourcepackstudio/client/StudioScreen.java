@@ -136,7 +136,17 @@ public final class StudioScreen extends ScaledScreen {
 	private String iconLabel = "";
 
 	/** Dialog nicht durchsichtig - das Glas darunter verwirrte. */
-	private static final int DIALOG_FILL = 0xFFF2EFEC;
+	// Dialog: dunkel und deckend. Hell auf hellem Glas war zu viel Weiss -
+	// Feld, Knoepfe und Icon-Feld hoben sich nicht ab.
+	private static final int D_FILL      = 0xFF1E1E23;
+	private static final int D_EDGE      = 0x2EFFFFFF;
+	private static final int D_FIELD     = 0xFF2A2A31;
+	private static final int D_BTN       = 0xFF34343C;
+	private static final int D_BTN_HOVER = 0xFF42424B;
+	private static final int D_TEXT      = 0xFFF2F2F5;
+	private static final int D_MUTED     = 0xB3FFFFFF;
+	private static final int D_FAINT     = 0x80FFFFFF;
+	private static final int D_WARN      = 0xFFFF6B5E;
 	private static final int ICON_BOX = 32;
 	private PackBuilder.Built built;
 	private String createLabel = "";
@@ -251,7 +261,10 @@ public final class StudioScreen extends ScaledScreen {
 				itemKeys[i] = rel.replace('_', ' ').replace('/', ' ').toLowerCase(Locale.ROOT) + " " + rel;
 				continue;
 			}
-			String key = Registries.ITEM.get(Identifier.ofVanilla(it.id())).getTranslationKey();
+			// Getragene Ruestung heisst wie ihr Item ("worn:diamond_helmet" -> Diamond Helmet).
+			String itemId = it.id().startsWith(StudioItems.WORN_ID)
+				? it.id().substring(StudioItems.WORN_ID.length()) : it.id();
+			String key = Registries.ITEM.get(Identifier.ofVanilla(itemId)).getTranslationKey();
 			itemNames[i] = Text.translatable(key).getString();
 			// Name UND Kennung: "gold" findet so auch "Golden Sword".
 			itemKeys[i] = (itemNames[i] + " " + it.id().replace('_', ' ')).toLowerCase(Locale.ROOT);
@@ -284,11 +297,12 @@ public final class StudioScreen extends ScaledScreen {
 	// mit Pfeil zum Auf- und Zuklappen. Waehrend gesucht wird, sind alle
 	// offen - sonst saehe man Treffer in zugeklappten Kategorien nicht.
 
-	// Reihenfolge in der Sidebar: Items, Blocks, Sounds.
+	// Reihenfolge in der Sidebar: Items, Blocks, Worn armor, Sounds.
 	private static final int CAT_ITEMS = 0;
 	private static final int CAT_BLOCKS = 1;
-	private static final int CAT_SOUNDS = 2;
-	private static final int CAT_COUNT = 3;
+	private static final int CAT_WORN = 2;
+	private static final int CAT_SOUNDS = 3;
+	private static final int CAT_COUNT = 4;
 
 	/** rowItem-Wert fuer den Kopf einer Kategorie: -10 - Kategorie. */
 	private static final int CAT_ROW = -10;
@@ -299,16 +313,36 @@ public final class StudioScreen extends ScaledScreen {
 	 */
 	private final java.util.Set<Integer> expanded = new java.util.HashSet<>();
 
+	/**
+	 * Waehrend einer Suche: zugeklappte Kategorien. Bei einer Suche ist erst
+	 * einmal alles offen (sonst saehe man die Treffer nicht), man kann aber
+	 * trotzdem zuklappen. Wird geleert, sobald das Suchfeld leer ist.
+	 */
+	private final java.util.Set<Integer> searchCollapsed = new java.util.HashSet<>();
+
+	private boolean isOpen(int cat) {
+		return search.text().isBlank() ? expanded.contains(cat) : !searchCollapsed.contains(cat);
+	}
+
 	private String[] rowCount = new String[0];
 
 	/** Blocks: alles mit 3D-Vorschau und Bloecke mit Sondermodell (Kiste, Bett ...). */
 	private static int category(StudioItem it) {
-		return it.sound() ? CAT_SOUNDS : (it.cube() || it.block() != null) ? CAT_BLOCKS : CAT_ITEMS;
+		if (it.sound()) {
+			return CAT_SOUNDS;
+		}
+		if (it.group().startsWith(StudioItems.WORN)) {
+			return CAT_WORN;
+		}
+		// Bloecke: alles mit Block (auch Kisten, Betten). Das Schild hat
+		// eine 3D-Vorschau, ist aber ein Item.
+		return it.block() != null ? CAT_BLOCKS : CAT_ITEMS;
 	}
 
 	private static final String[] CAT_KEYS = {
 		"resourcepackstudio.studio.cat.items",
 		"resourcepackstudio.studio.cat.blocks",
+		"resourcepackstudio.studio.cat.worn",
 		"resourcepackstudio.studio.cat.sounds"};
 
 	private void buildRows() {
@@ -343,7 +377,10 @@ public final class StudioScreen extends ScaledScreen {
 			labels.add(Text.translatable(CAT_KEYS[cat]).getString());
 			counts.add(Integer.toString(hits.size()));
 			idx.add(CAT_ROW - cat);
-			if (q.isEmpty() && !expanded.contains(cat)) {
+			if (q.isEmpty()) {
+				searchCollapsed.clear();
+			}
+			if (!isOpen(cat)) {
 				continue;
 			}
 			// Gruppenkoepfe bei Items (Schwerter, Aexte ... Weitere) und
@@ -355,6 +392,8 @@ public final class StudioScreen extends ScaledScreen {
 					group = it.group();
 					labels.add(cat == CAT_SOUNDS
 						? folderLabel(group.substring(StudioItems.SOUND_GROUP.length()))
+						: cat == CAT_WORN
+						? Text.translatable("resourcepackstudio.worn." + group.substring(StudioItems.WORN.length() + 1)).getString()
 						: Text.translatable("resourcepackstudio.studio.group." + group).getString());
 					counts.add(null);
 					idx.add(-1);
@@ -480,6 +519,14 @@ public final class StudioScreen extends ScaledScreen {
 		maybeBlur(ctx);
 		ctx.fill(0, 0, this.width, this.height, Theme.SCRIM);
 
+		// Liegt ein Dialog darueber, ist vom Studio nichts zu sehen - kein
+		// Panel, keine Sidebar, keine Schrift. Nur Welt (abgedunkelt) und Dialog.
+		if (dialog != Dialog.NONE) {
+			ctx.fill(0, 0, this.width, this.height, 0x40000000);
+			renderDialog(ctx, mouseX, mouseY);
+			return;
+		}
+
 		Surface.shadowPanel(ctx, px, py, pw, ph,
 			Theme.SHADOW_SPREAD, Theme.SHADOW_OFFSET, Theme.SHADOW);
 		if (!Surface.refractPanel(ctx, px, py, pw, ph, Theme.PANEL)
@@ -493,15 +540,9 @@ public final class StudioScreen extends ScaledScreen {
 			Surface.card(ctx, sx, sy, sw, sh, Theme.SIDEBAR);
 		}
 
-		// Liegt ein Dialog darueber, reagiert darunter nichts auf die Maus.
-		int mx = dialog == Dialog.NONE ? mouseX : -1;
-		int my = dialog == Dialog.NONE ? mouseY : -1;
-		renderSidebar(ctx, mx, my);
-		renderCreateButton(ctx, mx, my);
-		renderContent(ctx, mx, my);
-		if (dialog != Dialog.NONE) {
-			renderDialog(ctx, mouseX, mouseY);
-		}
+		renderSidebar(ctx, mouseX, mouseY);
+		renderCreateButton(ctx, mouseX, mouseY);
+		renderContent(ctx, mouseX, mouseY);
 		// Kein super.render - das macht ScaledScreen.
 	}
 
@@ -599,98 +640,99 @@ public final class StudioScreen extends ScaledScreen {
 		// Neue Ebene: Sonst laege die Schrift der Seite darunter UEBER der
 		// Dialogflaeche - Minecraft zeichnet Text einer Ebene zuletzt.
 		ctx.createNewRootLayer();
-		ctx.fill(px, py, px + pw, py + ph, 0x88000000);
 
 		int pad = 14;
-		this.dlgW = Math.min(300, pw - 40);
+		this.dlgW = Math.min(300, this.width - 40);
 		int lineH = Ui.advance(Ui.BODY_H, Ui.BODY_D, 4);
-		int h = pad + Ui.TITLE_H + Ui.TITLE_D + 10;
+		int labelH = Ui.SMALL_H + Ui.SMALL_D + 6;
+		int iconRowH = Math.max(ICON_BOX, BTN_H + 3 + Ui.SMALL_H + Ui.SMALL_D);
+		int h = pad + Ui.TITLE_H + Ui.TITLE_D + 12;
 		if (dialog == Dialog.NAME) {
-			h += Ui.SMALL_H + Ui.SMALL_D + 6 + BTN_H + 12           // Name
-				+ Ui.SMALL_H + Ui.SMALL_D + 6 + ICON_BOX + 6         // Icon
-				+ Ui.SMALL_H + Ui.SMALL_D + 12                       // Hinweis
-				+ Ui.SMALL_H + Ui.SMALL_D;                           // Anzahl
+			h += labelH + BTN_H + 12                 // Name
+				+ labelH + iconRowH;                 // Icon: Feld links, Knopf + Hinweis rechts
 		} else {
 			if (!dlgLine1.isEmpty()) h += lineH;
 			if (!dlgLine2.isEmpty()) h += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 6);
 			if (!dlgLine3.isEmpty()) h += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 6) * 2;
 		}
 		if (dialog != Dialog.WORKING) {
-			h += 14 + BTN_H;
+			h += 16 + BTN_H;
 		}
 		h += pad;
 		this.dlgH = h;
-		this.dlgX = px + (pw - dlgW) / 2;
-		this.dlgY = py + (ph - dlgH) / 2;
+		// Mitte des Bildschirms - das grosse Panel ist ausgeblendet.
+		this.dlgX = (this.width - dlgW) / 2;
+		this.dlgY = (this.height - dlgH) / 2;
 
-		Surface.shadowCard(ctx, dlgX, dlgY, dlgW, dlgH, 6, 3, Theme.SHADOW);
-		if (!Surface.glassCard(ctx, dlgX, dlgY, dlgW, dlgH, DIALOG_FILL)) {
-			Surface.card(ctx, dlgX, dlgY, dlgW, dlgH, DIALOG_FILL);
-		}
+		Surface.shadowCard(ctx, dlgX, dlgY, dlgW, dlgH, 8, 3, 0x66000000);
+		Surface.card(ctx, dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, D_EDGE);
+		Surface.card(ctx, dlgX, dlgY, dlgW, dlgH, D_FILL);
 
 		int x = dlgX + pad;
 		int w = dlgW - pad * 2;
 		int y = dlgY + pad;
 		Ui.drawTop(ctx, this.textRenderer, Ui.title(Ui.fit(this.textRenderer, dlgTitle, w)),
-			x, y, Ui.TOP_TITLE, Theme.TEXT);
-		y += Ui.TITLE_H + Ui.TITLE_D + 10;
+			x, y, Ui.TOP_TITLE, D_TEXT);
+		y += Ui.TITLE_H + Ui.TITLE_D + 12;
 
 		if (dialog == Dialog.NAME) {
-			Ui.drawTop(ctx, this.textRenderer, Ui.small(dlgLine1), x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
-			y += Ui.SMALL_H + Ui.SMALL_D + 6;
-			nameField.render(ctx, this.textRenderer, x, y, w, BTN_H);
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(dlgLine1), x, y, Ui.TOP_SMALL, D_MUTED);
+			y += labelH;
+			nameField.render(ctx, this.textRenderer, x, y, w, BTN_H, D_EDGE, D_FIELD, D_TEXT, D_FAINT);
 			y += BTN_H + 12;
 
-			// Pack-Icon: Vorschau, "Bild waehlen", ggf. "Entfernen".
-			Ui.drawTop(ctx, this.textRenderer, Ui.small(iconLabel), x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
-			y += Ui.SMALL_H + Ui.SMALL_D + 6;
-			Surface.row(ctx, x, y, ICON_BOX, ICON_BOX, Theme.FIELD_FOCUS);
+			// Pack-Icon: Feld links, rechts "Bild waehlen" (+ "Entfernen") und
+			// darunter der Hinweis bzw. Fehler.
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(iconLabel), x, y, Ui.TOP_SMALL, D_MUTED);
+			y += labelH;
+			Surface.row(ctx, x - 1, y - 1, ICON_BOX + 2, ICON_BOX + 2, D_EDGE);
+			Surface.row(ctx, x, y, ICON_BOX, ICON_BOX, D_FIELD);
 			if (icon.texture() != null) {
 				ctx.drawTexture(RenderPipelines.GUI_TEXTURED, icon.texture(), x + 2, y + 2, 0.0F, 0.0F,
 					ICON_BOX - 4, ICON_BOX - 4, ICON_BOX - 4, ICON_BOX - 4);
+			} else {
+				// Leeres Feld: ein "+" statt einer weissen Flaeche.
+				int c = ICON_BOX / 2;
+				Draw.hLine(ctx, x + c - 5, y + c, 11, D_FAINT);
+				Draw.vLine(ctx, x + c, y + c - 5, 11, D_FAINT);
 			}
-			int by0 = y + (ICON_BOX - BTN_H) / 2;
-			this.chooseX = x + ICON_BOX + 10;
-			this.chooseY = by0;
+			int rx = x + ICON_BOX + 10;
+			this.chooseX = rx;
+			this.chooseY = y;
 			this.chooseW = Ui.width(this.textRenderer, chooseLabel) + 24;
 			boolean ch = !icon.choosing() && Draw.inside(mouseX, mouseY, chooseX, chooseY, chooseW, BTN_H);
-			Surface.row(ctx, chooseX, chooseY, chooseW, BTN_H, ch ? Theme.FIELD_HOVER : Theme.FIELD);
+			Surface.row(ctx, chooseX, chooseY, chooseW, BTN_H, ch ? D_BTN_HOVER : D_BTN);
 			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(chooseLabel), chooseX + 12, chooseY, BTN_H,
-				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, icon.choosing() ? Theme.TEXT_FAINT : Theme.TEXT);
+				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, icon.choosing() ? D_FAINT : D_TEXT);
 			if (icon.path() != null) {
 				this.removeX = chooseX + chooseW + 6;
 				this.removeW = Ui.width(this.textRenderer, removeLabel) + 24;
 				boolean rh = Draw.inside(mouseX, mouseY, removeX, chooseY, removeW, BTN_H);
-				Surface.row(ctx, removeX, chooseY, removeW, BTN_H, rh ? Theme.FIELD_HOVER : Theme.FIELD);
+				Surface.row(ctx, removeX, chooseY, removeW, BTN_H, rh ? D_BTN_HOVER : D_BTN);
 				Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(removeLabel), removeX + 12, chooseY, BTN_H,
-					Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
+					Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, D_TEXT);
 			} else {
 				this.removeW = 0;
 			}
-			y += ICON_BOX + 6;
-			Ui.drawTop(ctx, this.textRenderer, Ui.small(Ui.fitSmall(this.textRenderer, iconMsg, w)),
-				x, y, Ui.TOP_SMALL, iconMsgWarn ? Theme.WARN : Theme.TEXT_FAINT);
-			y += Ui.SMALL_H + Ui.SMALL_D + 12;
-
-			Ui.drawTop(ctx, this.textRenderer, Ui.small(Ui.fitSmall(this.textRenderer, dlgLine2, w)),
-				x, y, Ui.TOP_SMALL, Theme.TEXT_FAINT);
-			y += Ui.SMALL_H + Ui.SMALL_D;
+			Ui.drawTop(ctx, this.textRenderer,
+				Ui.small(Ui.fitSmall(this.textRenderer, iconMsg, x + w - rx)),
+				rx, y + BTN_H + 3, Ui.TOP_SMALL, iconMsgWarn ? D_WARN : D_FAINT);
 		} else {
 			if (!dlgLine1.isEmpty()) {
 				Ui.drawTop(ctx, this.textRenderer, Ui.bold(Ui.fitBold(this.textRenderer, dlgLine1, w)),
-					x, y, Ui.TOP_BODY, dialog == Dialog.ERROR ? Theme.WARN : Theme.TEXT);
+					x, y, Ui.TOP_BODY, dialog == Dialog.ERROR ? D_WARN : D_TEXT);
 				y += lineH;
 			}
 			if (!dlgLine2.isEmpty()) {
 				Ui.drawTop(ctx, this.textRenderer, Ui.small(Ui.fitSmall(this.textRenderer, dlgLine2, w)),
-					x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
+					x, y, Ui.TOP_SMALL, D_MUTED);
 				y += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 6);
 			}
 			if (!dlgLine3.isEmpty()) {
 				// Zwei Zeilen Platz: Hinweis, was "Enable pack now" tut.
 				List<String> lines = Ui.wrap(this.textRenderer, dlgLine3, w);
 				for (int i = 0; i < Math.min(2, lines.size()); i++) {
-					Ui.drawTop(ctx, this.textRenderer, Ui.small(lines.get(i)), x, y, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+					Ui.drawTop(ctx, this.textRenderer, Ui.small(lines.get(i)), x, y, Ui.TOP_SMALL, D_FAINT);
 					y += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 6);
 				}
 			}
@@ -701,7 +743,8 @@ public final class StudioScreen extends ScaledScreen {
 			return;
 		}
 
-		// Knoepfe rechts unten: [Abbrechen/Schliessen] [Hauptaktion]
+		// Fusszeile: links (nur beim Erstellen) die Anzahl, rechts
+		// [Abbrechen/Schliessen] [Hauptaktion].
 		int by = dlgY + dlgH - pad - BTN_H;
 		int right = dlgX + dlgW - pad;
 		if (!okLabel.isEmpty()) {
@@ -724,9 +767,15 @@ public final class StudioScreen extends ScaledScreen {
 		this.noX = right - noW;
 		this.noY = by;
 		boolean hov = Draw.inside(mouseX, mouseY, noX, noY, noW, BTN_H);
-		Surface.row(ctx, noX, noY, noW, BTN_H, hov ? Theme.FIELD_HOVER : Theme.FIELD);
+		Surface.row(ctx, noX, noY, noW, BTN_H, hov ? D_BTN_HOVER : D_BTN);
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(noLabel), noX + 12, noY, BTN_H,
-			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, D_TEXT);
+
+		if (dialog == Dialog.NAME && !dlgLine2.isEmpty()) {
+			Ui.drawCenteredIn(ctx, this.textRenderer,
+				Ui.small(Ui.fitSmall(this.textRenderer, dlgLine2, noX - 10 - x)), x, by, BTN_H,
+				Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, D_FAINT);
+		}
 	}
 
 	/** Klick, waehrend ein Dialog offen ist. Alles andere ist gesperrt. */
@@ -821,6 +870,8 @@ public final class StudioScreen extends ScaledScreen {
 		}
 		Sdf.clip(null);
 		ctx.disableScissor();
+		drawBar(ctx, sideBarX(), sideTop, sideBottom - sideTop, sideHeight, sideScroll,
+			dragBar == BAR_SIDE || hoverBar(mouseX, mouseY, sideBarX(), sideTop, sideBottom - sideTop));
 	}
 
 	/** Kopf einer Kategorie: Pfeil, fetter Name, rechts die Anzahl. */
@@ -828,7 +879,7 @@ public final class StudioScreen extends ScaledScreen {
 		if (hover) {
 			Surface.row(ctx, x - 4, y, w + 8, Metrics.ROW_H, Theme.ROW_HOVER);
 		}
-		boolean open = !search.text().isBlank() || expanded.contains(cat);
+		boolean open = isOpen(cat);
 		// Pfeil aus Linien: zu = nach rechts, offen = nach unten. Genau
 		// auf der Mitte der Zeile (Hoehe 21: Mitte zwischen Pixel 10 und 11).
 		int top = y + (Metrics.ROW_H - 9) / 2;
@@ -970,6 +1021,94 @@ public final class StudioScreen extends ScaledScreen {
 		}
 		Sdf.clip(null);
 		ctx.disableScissor();
+		drawBar(ctx, contentBarX(), gt, listBottom - gt, contentHeight, scroll,
+			dragBar == BAR_CONTENT || hoverBar(mouseX, mouseY, contentBarX(), gt, listBottom - gt));
+	}
+
+	// ---- Bildlaufleisten -------------------------------------------------
+	//
+	// Wie auf einer Webseite: ein schmaler Balken am Rand, nur wenn es mehr
+	// gibt als hineinpasst. Ziehen am Griff scrollt, Klick daneben springt
+	// dorthin.
+
+	private static final int BAR_W = 4;
+	private static final int BAR_NONE = 0;
+	private static final int BAR_SIDE = 1;
+	private static final int BAR_CONTENT = 2;
+	private int dragBar = BAR_NONE;
+	private double dragGrab;
+
+	private int sideBarX() {
+		return sx + sw - 7;
+	}
+
+	/** Im rechten Rand des Panels, neben den Karten. */
+	private int contentBarX() {
+		return cx + cw + 3;
+	}
+
+	private static int thumbH(int h, int total) {
+		return Math.max(20, (int) ((long) h * h / Math.max(1, total)));
+	}
+
+	private static int thumbY(int top, int h, int total, int scroll) {
+		int th = thumbH(h, total);
+		int max = Math.max(1, total - h);
+		return top + (int) ((long) (h - th) * Math.min(scroll, max) / max);
+	}
+
+	private static boolean hoverBar(int mx, int my, int x, int top, int h) {
+		return Draw.inside(mx, my, x - 3, top, BAR_W + 6, h);
+	}
+
+	private static void drawBar(DrawContext ctx, int x, int top, int h, int total, int scroll, boolean active) {
+		if (total <= h || h <= 0) {
+			return;
+		}
+		Draw.roundedRect(ctx, x, top, BAR_W, h, 2, 0x14000000);
+		Draw.roundedRect(ctx, x, thumbY(top, h, total, scroll), BAR_W, thumbH(h, total), 2,
+			active ? 0x73000000 : 0x40000000);
+	}
+
+	/** Klick auf eine Leiste: Griff festhalten, oder dorthin springen. */
+	private boolean barClick(double mx, double my) {
+		int gt = gridTop();
+		if (sideHeight > sideBottom - sideTop && hoverBar((int) mx, (int) my, sideBarX(), sideTop, sideBottom - sideTop)) {
+			dragBar = BAR_SIDE;
+			grab(my, sideTop, sideBottom - sideTop, sideHeight, sideScroll);
+			return true;
+		}
+		if (StudioIndex.result() != null && contentHeight > listBottom - gt
+				&& hoverBar((int) mx, (int) my, contentBarX(), gt, listBottom - gt)) {
+			dragBar = BAR_CONTENT;
+			grab(my, gt, listBottom - gt, contentHeight, scroll);
+			return true;
+		}
+		return false;
+	}
+
+	private void grab(double my, int top, int h, int total, int current) {
+		int ty = thumbY(top, h, total, current);
+		int th = thumbH(h, total);
+		// Auf dem Griff: an dieser Stelle festhalten. Daneben: Griff mittig
+		// unter die Maus.
+		dragGrab = my >= ty && my < ty + th ? my - ty : th / 2.0;
+		dragBarTo(my);
+	}
+
+	private void dragBarTo(double my) {
+		if (dragBar == BAR_SIDE) {
+			sideScroll = scrollFor(my, sideTop, sideBottom - sideTop, sideHeight);
+		} else if (dragBar == BAR_CONTENT) {
+			int gt = gridTop();
+			scroll = scrollFor(my, gt, listBottom - gt, contentHeight);
+		}
+	}
+
+	private int scrollFor(double my, int top, int h, int total) {
+		int th = thumbH(h, total);
+		double f = (my - dragGrab - top) / Math.max(1, h - th);
+		return (int) Math.round(Math.max(0, Math.min(1, f)) * Math.max(0, total - h));
 	}
 
 	// ---- Lautstaerke der Sound-Vorschau ---------------------------------
@@ -1012,6 +1151,10 @@ public final class StudioScreen extends ScaledScreen {
 
 	@Override
 	protected boolean scaledMouseDragged(Click click, double dx, double dy) {
+		if (dragBar != BAR_NONE) {
+			dragBarTo(click.y());
+			return true;
+		}
 		if (volDragging) {
 			setVolumeFromMouse(click.x());
 			return true;
@@ -1022,6 +1165,7 @@ public final class StudioScreen extends ScaledScreen {
 	@Override
 	protected boolean scaledMouseReleased(Click click) {
 		volDragging = false;
+		dragBar = BAR_NONE;
 		return super.scaledMouseReleased(click);
 	}
 
@@ -1075,8 +1219,18 @@ public final class StudioScreen extends ScaledScreen {
 			Textures.Tex t = tex(item, v, 0);
 			if (t != null) {
 				int frame = Math.min(t.w(), t.h());
+				// Flaches Item: Ebene 0 traegt tintindex 0 (Farn, Ranken, Leder).
 				ctx.drawTexture(RenderPipelines.GUI_TEXTURED, t.id(), x, y, 0.0F, 0.0F,
-					size, size, frame, frame, t.w(), t.h());
+					size, size, frame, frame, t.w(), t.h(), ItemDiscovery.tint(item.id(), 0));
+			}
+			// Ebene 1 (Leder-Overlay) ungefaerbt darueber - wie im Inventar.
+			if (item.parts().size() > 1 && item.parts().get(1).modern().endsWith("_overlay")) {
+				Textures.Tex o = tex(item, v, 1);
+				if (o != null) {
+					int frame = Math.min(o.w(), o.h());
+					ctx.drawTexture(RenderPipelines.GUI_TEXTURED, o.id(), x, y, 0.0F, 0.0F,
+						size, size, frame, frame, o.w(), o.h());
+				}
 			}
 			return;
 		}
@@ -1098,19 +1252,32 @@ public final class StudioScreen extends ScaledScreen {
 				float tx = px(x, size, b.x1(), b.z2());
 				float ty = py(y, size, b.x1(), b.y2(), b.z2());
 				face(ctx, tex(item, v, b.up().part()), b.up(), tx, ty,
-					dx * k, dx * k / 2, -dz * k, dz * k / 2, 0xFFFFFFFF);
+					dx * k, dx * k / 2, -dz * k, dz * k / 2, shade(item, b.up(), 0xFF));
 			}
 			if (b.north() != null) {
 				face(ctx, tex(item, v, b.north().part()), b.north(), ox, oy,
-					dx * k, dx * k / 2, 0, dy * k, 0xFFCFCFCF);
+					dx * k, dx * k / 2, 0, dy * k, shade(item, b.north(), 0xCF));
 			}
 			if (b.east() != null) {
 				float ex = px(x, size, b.x2(), b.z1());
 				float ey = py(y, size, b.x2(), b.y2(), b.z1());
 				face(ctx, tex(item, v, b.east().part()), b.east(), ex, ey,
-					dz * k, -dz * k / 2, 0, dy * k, 0xFFA8A8A8);
+					dz * k, -dz * k / 2, 0, dy * k, shade(item, b.east(), 0xA8));
 			}
 		}
+	}
+
+	/** Seitenhelligkeit (0-255) mal Einfaerbung der Flaeche. */
+	private static int shade(StudioItem item, StudioItem.Face f, int light) {
+		// Getragene Ruestung: Teil 0 ist die Grundtextur - bei Leder grau im
+		// Bild und im Spiel eingefaerbt. Das Overlay (Teil 1) bleibt ungefaerbt.
+		int index = f.tint() >= 0 ? f.tint()
+			: (f.part() == 0 && item.id().startsWith(StudioItems.WORN_ID) ? 0 : -1);
+		int c = ItemDiscovery.tint(item.id(), index);
+		int r = ((c >> 16) & 0xFF) * light / 255;
+		int g = ((c >> 8) & 0xFF) * light / 255;
+		int b = (c & 0xFF) * light / 255;
+		return 0xFF000000 | (r << 16) | (g << 8) | b;
 	}
 
 	/** Bildschirm-x eines Modellpunkts (x Osten, z Sueden). */
@@ -1173,6 +1340,32 @@ public final class StudioScreen extends ScaledScreen {
 		if (rw <= 0 || rh <= 0) {
 			return;
 		}
+		// Gedrehter Ausschnitt: Ursprung und Richtungen mitdrehen. Nie
+		// spiegeln - gespiegelte Flaechen wirft Minecraft beim Zeichnen weg.
+		if (f.turn() == 1) {
+			float nax = -bx, nay = -by;
+			ox += bx;
+			oy += by;
+			bx = ax;
+			by = ay;
+			ax = nax;
+			ay = nay;
+		} else if (f.turn() == 2) {
+			ox += ax + bx;
+			oy += ay + by;
+			ax = -ax;
+			ay = -ay;
+			bx = -bx;
+			by = -by;
+		} else if (f.turn() == 3) {
+			float nbx = -ax, nby = -ay;
+			ox += ax;
+			oy += ay;
+			ax = bx;
+			ay = by;
+			bx = nbx;
+			by = nby;
+		}
 		ctx.getMatrices().pushMatrix();
 		FACE.set(ax / 16.0F, ay / 16.0F, bx / 16.0F, by / 16.0F, ox, oy);
 		ctx.getMatrices().mul(FACE);
@@ -1214,6 +1407,11 @@ public final class StudioScreen extends ScaledScreen {
 			return true;
 		}
 
+		// Bildlaufleisten vor den Zeilen - sie liegen am Rand darueber.
+		if (barClick(mx, my)) {
+			return true;
+		}
+
 		// Sidebar
 		if (Draw.inside(mx, my, sx, sideTop, sw, sideBottom - sideTop)) {
 			int x = sx + Metrics.PAD;
@@ -1221,16 +1419,14 @@ public final class StudioScreen extends ScaledScreen {
 			for (int i = 0; i < rowItem.length; i++) {
 				int ry = sideTop + rowY[i] - sideScroll;
 				if (rowItem[i] <= CAT_ROW) {
-					// Kategorie auf- oder zuklappen. Waehrend einer Suche ist
-					// alles offen - dann bewirkt der Klick nichts.
+					// Kategorie auf- oder zuklappen - auch waehrend einer Suche.
 					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
-						if (search.text().isBlank()) {
-							int cat = CAT_ROW - rowItem[i];
-							if (!expanded.remove(cat)) {
-								expanded.add(cat);
-							}
-							buildRows(false);
+						int cat = CAT_ROW - rowItem[i];
+						java.util.Set<Integer> set = search.text().isBlank() ? expanded : searchCollapsed;
+						if (!set.remove(cat)) {
+							set.add(cat);
 						}
+						buildRows(false);
 						return true;
 					}
 					continue;

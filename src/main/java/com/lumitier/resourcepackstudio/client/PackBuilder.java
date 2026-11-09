@@ -3,6 +3,7 @@ package com.lumitier.resourcepackstudio.client;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.lumitier.resourcepackstudio.ResourcePackStudio;
+import com.lumitier.resourcepackstudio.scan.EntityModels;
 import com.lumitier.resourcepackstudio.scan.PackScanner;
 import com.lumitier.resourcepackstudio.scan.StudioItem;
 import net.minecraft.client.MinecraftClient;
@@ -138,9 +139,23 @@ public final class PackBuilder {
 		// aendert eine gewaehlte Treppe nur die Treppe.
 		Map<String, Source> files = new LinkedHashMap<>();
 		Map<StudioItem, Map<String, String>> remaps = new LinkedHashMap<>();
+		// Ruestungs-Lage 1 (Helm, Brust, Schuhe): Bildpfad -> gewaehlte Teile.
+		// Wird unten zu EINEM Bild zusammengesetzt (WornComposer).
+		Map<String, List<Object[]>> worn = new LinkedHashMap<>();
 		for (Map.Entry<StudioItem, PackScanner.Variant> e : sel.entrySet()) {
 			StudioItem item = e.getKey();
 			List<StudioItem.Part> parts = item.parts();
+			EntityModels.Piece piece = WornComposer.pieceOf(item);
+			if (piece != null) {
+				List<String> entries = e.getValue().entries();
+				for (int i = 0; i < parts.size() && i < entries.size(); i++) {
+					if (entries.get(i) != null) {
+						worn.computeIfAbsent(parts.get(i).modern(), k -> new ArrayList<>())
+							.add(new Object[] {piece, e.getValue(), entries.get(i), item.id()});
+					}
+				}
+				continue;
+			}
 			List<String> entries = e.getValue().entries();
 			Map<String, String> remap = new LinkedHashMap<>();
 			for (int i = 0; i < parts.size() && i < entries.size(); i++) {
@@ -189,6 +204,22 @@ public final class PackBuilder {
 				credits.add(src.item() + " (" + file + ")  <-  " + v.pack().name());
 			}
 
+			for (Map.Entry<String, List<Object[]>> e : worn.entrySet()) {
+				List<WornComposer.Piece> pieces = new ArrayList<>();
+				for (Object[] o : e.getValue()) {
+					PackScanner.Variant v = (PackScanner.Variant) o[1];
+					byte[] png = read(v, (String) o[2]);
+					if (png != null) {
+						pieces.add(new WornComposer.Piece((EntityModels.Piece) o[0], png));
+						credits.add(o[3] + " (" + e.getKey() + ")  <-  " + v.pack().name());
+					}
+				}
+				if (!pieces.isEmpty()) {
+					put(zip, StudioItem.Part.file(e.getKey()), WornComposer.compose(e.getKey(), pieces));
+					written++;
+				}
+			}
+
 			for (Map.Entry<StudioItem, Map<String, String>> e : remaps.entrySet()) {
 				if (!ModelCopies.write(zip, e.getKey(), e.getValue())) {
 					ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] {}: no model to redirect - "
@@ -197,7 +228,7 @@ public final class PackBuilder {
 			}
 
 			StringBuilder sb = new StringBuilder();
-			sb.append("Made with Resource Pack Studio.\n\n");
+			sb.append(PackScanner.OWN_MARK).append("\n\n");
 			sb.append("The textures in this pack belong to the authors of the packs they came from.\n");
 			sb.append("Ask them before you share this pack.\n\n");
 			for (String c : credits) {

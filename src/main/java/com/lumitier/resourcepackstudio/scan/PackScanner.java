@@ -42,6 +42,9 @@ public final class PackScanner {
 	private static final int MAX_DEPTH = 6;
 	private static final String MCMETA = "pack.mcmeta";
 
+	/** Erste Zeile der credits.txt in Packs, die das Studio gebaut hat (PackBuilder). */
+	public static final String OWN_MARK = "Made with Resource Pack Studio.";
+
 	private PackScanner() {}
 
 	/** Ein gefundenes Pack. prefix ist "" oder der Unterordner in der Zip, mit "/". */
@@ -167,6 +170,18 @@ public final class PackScanner {
 		String name = p.getFileName().toString();
 		name = clean(name.substring(0, name.length() - 4));
 		try (ZipFile zip = new ZipFile(p.toFile())) {
+			// Packs, die das Studio selbst gebaut hat, sind keine Quelle -
+			// sie bestehen nur aus Bildern anderer Packs. Erkennbar an der
+			// credits.txt, die nur das Studio so schreibt.
+			ZipEntry credits = zip.getEntry("credits.txt");
+			if (credits != null) {
+				try (java.io.InputStream in = zip.getInputStream(credits)) {
+					if (new String(in.readNBytes(64), java.nio.charset.StandardCharsets.UTF_8)
+							.startsWith(OWN_MARK)) {
+						return null;
+					}
+				}
+			}
 			if (zip.getEntry(MCMETA) != null) {
 				return new Pack(name, p, true, "", source(root, p));
 			}

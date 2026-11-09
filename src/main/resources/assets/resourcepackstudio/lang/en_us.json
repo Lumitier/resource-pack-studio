@@ -54,5 +54,16 @@
   "resourcepackstudio.studio.cat.sounds": "Sounds",
   "resourcepackstudio.studio.count.sound.one": "1 sound",
   "resourcepackstudio.studio.count.sound.many": "%s sounds",
-  "resourcepackstudio.sound.volume": "Preview volume"
+  "resourcepackstudio.sound.volume": "Preview volume",
+  "resourcepackstudio.studio.group.worn": "Worn armor",
+  "resourcepackstudio.studio.cat.worn": "Worn armor",
+  "resourcepackstudio.worn.leather": "Leather",
+  "resourcepackstudio.worn.chainmail": "Chainmail",
+  "resourcepackstudio.worn.copper": "Copper",
+  "resourcepackstudio.worn.iron": "Iron",
+  "resourcepackstudio.worn.gold": "Gold",
+  "resourcepackstudio.worn.diamond": "Diamond",
+  "resourcepackstudio.worn.netherite": "Netherite",
+  "resourcepackstudio.worn.turtle": "Turtle",
+  "resourcepackstudio.worn.elytra": "Elytra"
 }

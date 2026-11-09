@@ -25,6 +25,6 @@
     "minecraft": "~1.21.11",
     "java": ">=21",
     "fabric-api": "*",
-    "lumilib": ">=1.4.1"
+    "lumilib": ">=1.5.2"
   }
 }

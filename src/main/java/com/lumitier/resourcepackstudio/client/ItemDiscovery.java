@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.lumitier.resourcepackstudio.ResourcePackStudio;
+import com.lumitier.resourcepackstudio.scan.EntityModels;
 import com.lumitier.resourcepackstudio.scan.LegacyBlocks;
 import com.lumitier.resourcepackstudio.scan.StudioItem;
 import com.lumitier.resourcepackstudio.scan.StudioItems;
@@ -81,13 +82,27 @@ public final class ItemDiscovery {
 
 		int skipped = 0;
 		Set<List<String>> seenSpecial = new HashSet<>();
+		Map<String, int[]> tints = new HashMap<>();
 		int cubes = 0;
 		for (Item item : Registries.ITEM) {
 			if (item == Items.AIR) {
 				continue;
 			}
 			Identifier id = Registries.ITEM.getId(item);
-			if (!Identifier.DEFAULT_NAMESPACE.equals(id.getNamespace()) || known.contains(id.getPath())) {
+			if (!Identifier.DEFAULT_NAMESPACE.equals(id.getNamespace())) {
+				continue;
+			}
+			// Farben auch fuer die festen PvP-Eintraege (Lederruestung).
+			try {
+				int[] t = readTints(pack, id.getPath());
+				if (t != null) {
+					tints.put(id.getPath(), t);
+					// Getragene Lederruestung: dieselbe Standardfarbe wie das Item.
+					tints.put(StudioItems.WORN_ID + id.getPath(), t);
+				}
+			} catch (Throwable ignored) {
+			}
+			if (known.contains(id.getPath())) {
 				continue;
 			}
 			StudioItem found;
@@ -98,6 +113,13 @@ public final class ItemDiscovery {
 					: block(pack, item, id.getPath());
 				if (found == null) {
 					found = special(pack, item, id.getPath(), seenSpecial);
+				} else if (id.getPath().equals("trident")) {
+					// In der Hand und geworfen ist der Dreizack 3D - eigenes Bild.
+					List<StudioItem.Part> parts = new ArrayList<>(found.parts());
+					if (exists(pack, "textures/entity/trident.png")) {
+						parts.add(new StudioItem.Part("entity/trident", List.of(), true));
+					}
+					found = new StudioItem(found.id(), found.group(), List.copyOf(parts), null, null);
 				}
 			} catch (Throwable e) {
 				found = null;
@@ -111,10 +133,107 @@ public final class ItemDiscovery {
 			}
 			out.add(found);
 		}
+		TINTS = Map.copyOf(tints);
 		int sounds = addSounds(pack, out);
 		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] {} entries: {} block(s), {} sound(s), the rest items. {} item(s) skipped (chests, beds, heads ...).",
 			out.size(), cubes, sounds, skipped);
 		return out;
+	}
+
+	// ------------------------------------------------------------------
+	// Einfaerbung (Gras, Blaetter, Leder)
+	// ------------------------------------------------------------------
+
+	/** Platzhalter fuer "Grasfarbe" - Alpha 0 kommt bei echten Farben nicht vor. */
+	private static final int GRASS = 0x00000001;
+	/** Grasfarbe, falls die Farbtabelle noch nicht geladen ist (Vanilla-Wert). */
+	private static final int GRASS_FALLBACK = 0xFF7CBD6B;
+	private static final int WHITE = 0xFFFFFFFF;
+
+	/** Item-Kennung -> Farbe je "tintindex". Unveraenderlich, wird als Ganzes ersetzt. */
+	private static volatile Map<String, int[]> TINTS = Map.of();
+
+	/**
+	 * Farbe, mit der Minecraft eine Flaeche mit diesem tintindex einfaerbt -
+	 * wie im Inventar. Weiss, wenn nichts eingefaerbt wird. Keine Allokation:
+	 * wird pro Flaeche und Bild gerufen.
+	 */
+	public static int tint(String itemId, int index) {
+		if (index < 0) {
+			return WHITE;
+		}
+		int[] t = TINTS.get(itemId);
+		if (t == null || index >= t.length) {
+			return WHITE;
+		}
+		if (t[index] != GRASS) {
+			return t[index];
+		}
+		// Wie Minecraft: Temperatur 0,5 und Niederschlag 1,0 aus der
+		// Farbtabelle des Spiels. Vor dem Laden liefert sie Magenta.
+		int c = net.minecraft.world.biome.GrassColors.getColor(0.5, 1.0);
+		return c == 0xFFFF00FF ? GRASS_FALLBACK : (c | 0xFF000000);
+	}
+
+	/**
+	 * Liest "tints" aus items/<id>.json - aus dem ersten Modell, das welche
+	 * hat. Bekannt: constant (feste Farbe), grass (Farbtabelle), dye
+	 * (Standardfarbe, Leder). Alles andere (Trank, Karte, Feuerwerk) bleibt
+	 * weiss - dort ist die Farbe nicht fest.
+	 */
+	private static int[] readTints(ResourcePack pack, String itemId) throws Exception {
+		JsonElement def = read(pack, Identifier.ofVanilla("items/" + itemId + ".json"));
+		JsonArray arr = findTints(def, 0);
+		if (arr == null || arr.isEmpty()) {
+			return null;
+		}
+		int[] out = new int[arr.size()];
+		boolean any = false;
+		for (int i = 0; i < out.length; i++) {
+			out[i] = WHITE;
+			if (!arr.get(i).isJsonObject()) {
+				continue;
+			}
+			JsonObject t = arr.get(i).getAsJsonObject();
+			String type = t.has("type") ? t.get("type").getAsString() : "";
+			if (type.endsWith("constant") && t.has("value")) {
+				out[i] = t.get("value").getAsInt() | 0xFF000000;
+			} else if (type.endsWith("dye") && t.has("default")) {
+				out[i] = t.get("default").getAsInt() | 0xFF000000;
+			} else if (type.endsWith("grass")) {
+				out[i] = GRASS;
+			} else {
+				continue;
+			}
+			any = any || out[i] != WHITE;
+		}
+		return any ? out : null;
+	}
+
+	private static JsonArray findTints(JsonElement node, int depth) {
+		if (node == null || depth > 10) {
+			return null;
+		}
+		if (node.isJsonObject()) {
+			JsonObject o = node.getAsJsonObject();
+			if (o.has("tints") && o.get("tints").isJsonArray()) {
+				return o.getAsJsonArray("tints");
+			}
+			for (Map.Entry<String, JsonElement> e : o.entrySet()) {
+				JsonArray r = findTints(e.getValue(), depth + 1);
+				if (r != null) {
+					return r;
+				}
+			}
+		} else if (node.isJsonArray()) {
+			for (JsonElement e : node.getAsJsonArray()) {
+				JsonArray r = findTints(e, depth + 1);
+				if (r != null) {
+					return r;
+				}
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -326,7 +445,9 @@ public final class ItemDiscovery {
 				uv[i] = u.getAsJsonArray().get(i).getAsFloat();
 			}
 		}
-		return new StudioItem.Face(part, uv[0], uv[1], uv[2], uv[3]);
+		JsonElement ti = f.getAsJsonObject().get("tintindex");
+		int tint = ti != null && ti.isJsonPrimitive() ? ti.getAsInt() : -1;
+		return new StudioItem.Face(part, uv[0], uv[1], uv[2], uv[3], 0, tint);
 	}
 
 	private static String faceTexture(JsonObject faces, String side, Map<String, String> textures) {
@@ -473,10 +594,14 @@ public final class ItemDiscovery {
 					textures.add("entity/shulker/" + tex);
 				}
 			}
-			case "banner" -> textures.add("entity/banner_base");
+			case "banner" -> {
+				textures.add("entity/banner_base");
+				textures.addAll(listTextures(pack, "entity/banner"));
+			}
 			case "shield" -> {
 				textures.add("entity/shield_base_nopattern");
 				textures.add("entity/shield_base");
+				textures.addAll(listTextures(pack, "entity/shield"));
 			}
 			case "conduit" -> {
 				textures.add("entity/conduit/base");
@@ -520,7 +645,23 @@ public final class ItemDiscovery {
 			parts.add(new StudioItem.Part(t, List.of(), true));
 		}
 		String block = item instanceof BlockItem bi ? Registries.BLOCK.getId(bi.getBlock()).getPath() : null;
-		return new StudioItem(itemId, StudioItems.OTHER, List.copyOf(parts), null, block);
+		// 3D-Vorschau, wo das Modell bekannt ist - sonst der ganze Bogen.
+		List<StudioItem.Box> boxes = switch (type) {
+			case "chest" -> EntityModels.chest();
+			case "shulker_box" -> EntityModels.shulker();
+			case "bed" -> EntityModels.bed();
+			case "banner" -> EntityModels.banner();
+			case "shield" -> EntityModels.shield();
+			case "head" -> {
+				// Skelett, Wither, Creeper: 64x32. Zombie, Piglin: 64x64.
+				// Drache: anderes Modell - Bogen.
+				String t0 = textures.get(0);
+				yield t0.contains("enderdragon") ? null
+					: EntityModels.head(64, t0.contains("zombie") || t0.contains("piglin") ? 64 : 32);
+			}
+			default -> null;
+		};
+		return new StudioItem(itemId, StudioItems.OTHER, List.copyOf(parts), boxes, block);
 	}
 
 	/** Erstes Sondermodell im Item-Eintrag (Grundzustand bevorzugt). */
@@ -552,6 +693,26 @@ public final class ItemDiscovery {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Alle Bilder eines Ordners unter textures/ ("entity/banner" -> die
+	 * Banner-Muster), sortiert. Fuer Banner und Schild: Die Muster sind
+	 * eigene Bilder und gehoeren zum selben Eintrag.
+	 */
+	private static List<String> listTextures(ResourcePack pack, String dir) {
+		java.util.TreeSet<String> out = new java.util.TreeSet<>();
+		try {
+			pack.findResources(ResourceType.CLIENT_RESOURCES, Identifier.DEFAULT_NAMESPACE, "textures/" + dir,
+				(id, supplier) -> {
+					String p = id.getPath();
+					if (p.endsWith(".png")) {
+						out.add(p.substring("textures/".length(), p.length() - 4));
+					}
+				});
+		} catch (Throwable ignored) {
+		}
+		return new ArrayList<>(out);
 	}
 
 	private static String path(String ref) {
