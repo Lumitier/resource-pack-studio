@@ -27,7 +27,7 @@ dependencies {
 	// LumiLib - ab Phase 2 Pflicht: Das Studio benutzt ihre Oberflaeche.
 	// transitive = false, sonst will Gradle LumiLibs eigene Abhaengigkeiten
 	// (YACL, Mod Menu ...) aufloesen und scheitert daran.
-	modImplementation("com.lumitier.lumilib:lumilib:1.5.2") { transitive = false }
+	modImplementation("com.lumitier.lumilib:lumilib:1.5.4") { transitive = false }
 }
 
 processResources {
