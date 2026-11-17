@@ -1,10 +1,12 @@
 package com.lumitier.resourcepackstudio.client;
 
 import com.lumitier.lumilib.client.Draw;
+import com.lumitier.lumilib.client.LumiScreen;
 import com.lumitier.lumilib.client.Metrics;
 import com.lumitier.lumilib.client.ScaledScreen;
 import com.lumitier.lumilib.client.SearchField;
 import com.lumitier.lumilib.client.Surface;
+import com.lumitier.lumilib.client.Anim;
 import com.lumitier.lumilib.client.Theme;
 import com.lumitier.lumilib.client.Ui;
 import com.lumitier.lumilib.client.gpu.Backdrop;
@@ -50,7 +52,7 @@ import java.util.Locale;
  * werden einmal berechnet - bei init(), nach jeder Suche und beim Klicken.
  * render() liest nur.
  */
-public final class StudioScreen extends ScaledScreen {
+public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	private static final int PREVIEW = 48;
 	private static final int CARD_PAD = 8;
@@ -135,18 +137,27 @@ public final class StudioScreen extends ScaledScreen {
 	private String removeLabel = "";
 	private String iconLabel = "";
 
-	/** Dialog nicht durchsichtig - das Glas darunter verwirrte. */
-	// Dialog: dunkel und deckend. Hell auf hellem Glas war zu viel Weiss -
-	// Feld, Knoepfe und Icon-Feld hoben sich nicht ab.
-	private static final int D_FILL      = 0xFF1E1E23;
-	private static final int D_EDGE      = 0x2EFFFFFF;
-	private static final int D_FIELD     = 0xFF2A2A31;
-	private static final int D_BTN       = 0xFF34343C;
-	private static final int D_BTN_HOVER = 0xFF42424B;
-	private static final int D_TEXT      = 0xFFF2F2F5;
-	private static final int D_MUTED     = 0xB3FFFFFF;
-	private static final int D_FAINT     = 0x80FFFFFF;
-	private static final int D_WARN      = 0xFFFF6B5E;
+	/**
+	 * Dialog-Flaeche: deckend, aus LumiLibs Palette.
+	 *
+	 * Deckend, weil das Glas darunter verwirrte. Aus der Palette und nicht
+	 * mehr fest dunkel: Vorher hatte der Dialog eigene Farben (dialogFill(),
+	 * Theme.TEXT und so weiter), die nur im dunklen Thema passten - im hellen
+	 * stand ein schwarzer Kasten mitten im hellen Studio. Jetzt ist es die
+	 * Farbe des Hub-Panels, nur ohne Durchsicht.
+	 */
+	private static int dialogFill() {
+		return Theme.PANEL | 0xFF000000;
+	}
+
+	/** Knopf unter der Maus: dieselbe Farbe, ein Stueck heller. */
+	private static int hoverOf(int argb) {
+		return Anim.mix(argb, 0xFFFFFFFF, 0.14F);
+	}
+
+	/** Wann der aktuelle Dialog erschien - fuer seine Einblendung. */
+	private long dialogAt;
+	private Dialog shownDialog = Dialog.NONE;
 	private static final int ICON_BOX = 32;
 	private PackBuilder.Built built;
 	private String createLabel = "";
@@ -480,9 +491,12 @@ public final class StudioScreen extends ScaledScreen {
 
 	@Override
 	public void close() {
-		if (this.client != null) {
-			this.client.setScreen(this.parent);
-		}
+		// Mit Bewegung zurueck - siehe ScaledScreen.closeAnimated.
+		closeAnimated(() -> {
+			if (this.client != null) {
+				this.client.setScreen(this.parent);
+			}
+		});
 	}
 
 	/** Eine PNG aufs Fenster gezogen: im Namens-Dialog wird sie das Pack-Icon. */
@@ -521,9 +535,31 @@ public final class StudioScreen extends ScaledScreen {
 
 		// Liegt ein Dialog darueber, ist vom Studio nichts zu sehen - kein
 		// Panel, keine Sidebar, keine Schrift. Nur Welt (abgedunkelt) und Dialog.
+		if (dialog != shownDialog) {
+			shownDialog = dialog;
+			dialogAt = Anim.now();
+		}
 		if (dialog != Dialog.NONE) {
 			ctx.fill(0, 0, this.width, this.height, 0x40000000);
-			renderDialog(ctx, mouseX, mouseY);
+			// Der Dialog waechst aus der Mitte, wie jedes Fenster von LumiLib.
+			// Auch beim Wechsel zwischen Dialogen (Name, Arbeitet, Fertig) -
+			// so sieht man, dass sich etwas getan hat.
+			float t = Anim.easeOut(Anim.progress(dialogAt, Anim.PAGE_MS));
+			var pose = ctx.getMatrices();
+			pose.pushMatrix();
+			if (t < 1.0F) {
+				float k = 0.95F + 0.05F * t;
+				float cx = this.width / 2.0F;
+				float cy = this.height / 2.0F;
+				pose.translate(cx, cy + (1.0F - t) * 6.0F);
+				pose.scale(k, k);
+				pose.translate(-cx, -cy);
+			}
+			try {
+				renderDialog(ctx, mouseX, mouseY);
+			} finally {
+				pose.popMatrix();
+			}
 			return;
 		}
 
@@ -554,7 +590,7 @@ public final class StudioScreen extends ScaledScreen {
 		boolean any = StudioIndex.selectionCount() > 0;
 		boolean hover = any && Draw.inside(mouseX, mouseY, createX, createY, createW, BTN_H);
 		Draw.hLine(ctx, sx + Metrics.PAD, createY - 5, sw - Metrics.PAD * 2, Theme.DIVIDER);
-		int fill = !any ? Theme.FIELD : (hover ? 0xFF2B97F0 : Theme.TOGGLE_ON);
+		int fill = !any ? Theme.FIELD : (hover ? hoverOf(Theme.TOGGLE_ON) : Theme.TOGGLE_ON);
 		Surface.row(ctx, createX, createY, createW, BTN_H, fill);
 		Ui.drawCenteredIn(ctx, this.textRenderer,
 			Ui.bold(Ui.fitBold(this.textRenderer, createLabel, createW - 12)),
@@ -664,75 +700,75 @@ public final class StudioScreen extends ScaledScreen {
 		this.dlgX = (this.width - dlgW) / 2;
 		this.dlgY = (this.height - dlgH) / 2;
 
-		Surface.shadowCard(ctx, dlgX, dlgY, dlgW, dlgH, 8, 3, 0x66000000);
-		Surface.card(ctx, dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, D_EDGE);
-		Surface.card(ctx, dlgX, dlgY, dlgW, dlgH, D_FILL);
+		Surface.shadowCard(ctx, dlgX, dlgY, dlgW, dlgH, 8, 3, Theme.SHADOW);
+		Surface.card(ctx, dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, Theme.DIVIDER);
+		Surface.card(ctx, dlgX, dlgY, dlgW, dlgH, dialogFill());
 
 		int x = dlgX + pad;
 		int w = dlgW - pad * 2;
 		int y = dlgY + pad;
 		Ui.drawTop(ctx, this.textRenderer, Ui.title(Ui.fit(this.textRenderer, dlgTitle, w)),
-			x, y, Ui.TOP_TITLE, D_TEXT);
+			x, y, Ui.TOP_TITLE, Theme.TEXT);
 		y += Ui.TITLE_H + Ui.TITLE_D + 12;
 
 		if (dialog == Dialog.NAME) {
-			Ui.drawTop(ctx, this.textRenderer, Ui.small(dlgLine1), x, y, Ui.TOP_SMALL, D_MUTED);
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(dlgLine1), x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
 			y += labelH;
-			nameField.render(ctx, this.textRenderer, x, y, w, BTN_H, D_EDGE, D_FIELD, D_TEXT, D_FAINT);
+			nameField.render(ctx, this.textRenderer, x, y, w, BTN_H, Theme.DIVIDER, Theme.FIELD, Theme.TEXT, Theme.TEXT_FAINT);
 			y += BTN_H + 12;
 
 			// Pack-Icon: Feld links, rechts "Bild waehlen" (+ "Entfernen") und
 			// darunter der Hinweis bzw. Fehler.
-			Ui.drawTop(ctx, this.textRenderer, Ui.small(iconLabel), x, y, Ui.TOP_SMALL, D_MUTED);
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(iconLabel), x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
 			y += labelH;
-			Surface.row(ctx, x - 1, y - 1, ICON_BOX + 2, ICON_BOX + 2, D_EDGE);
-			Surface.row(ctx, x, y, ICON_BOX, ICON_BOX, D_FIELD);
+			Surface.row(ctx, x - 1, y - 1, ICON_BOX + 2, ICON_BOX + 2, Theme.DIVIDER);
+			Surface.row(ctx, x, y, ICON_BOX, ICON_BOX, Theme.FIELD);
 			if (icon.texture() != null) {
 				ctx.drawTexture(RenderPipelines.GUI_TEXTURED, icon.texture(), x + 2, y + 2, 0.0F, 0.0F,
 					ICON_BOX - 4, ICON_BOX - 4, ICON_BOX - 4, ICON_BOX - 4);
 			} else {
 				// Leeres Feld: ein "+" statt einer weissen Flaeche.
 				int c = ICON_BOX / 2;
-				Draw.hLine(ctx, x + c - 5, y + c, 11, D_FAINT);
-				Draw.vLine(ctx, x + c, y + c - 5, 11, D_FAINT);
+				Draw.hLine(ctx, x + c - 5, y + c, 11, Theme.TEXT_FAINT);
+				Draw.vLine(ctx, x + c, y + c - 5, 11, Theme.TEXT_FAINT);
 			}
 			int rx = x + ICON_BOX + 10;
 			this.chooseX = rx;
 			this.chooseY = y;
 			this.chooseW = Ui.width(this.textRenderer, chooseLabel) + 24;
 			boolean ch = !icon.choosing() && Draw.inside(mouseX, mouseY, chooseX, chooseY, chooseW, BTN_H);
-			Surface.row(ctx, chooseX, chooseY, chooseW, BTN_H, ch ? D_BTN_HOVER : D_BTN);
+			Surface.row(ctx, chooseX, chooseY, chooseW, BTN_H, ch ? Theme.FIELD_HOVER : Theme.FIELD);
 			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(chooseLabel), chooseX + 12, chooseY, BTN_H,
-				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, icon.choosing() ? D_FAINT : D_TEXT);
+				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, icon.choosing() ? Theme.TEXT_FAINT : Theme.TEXT);
 			if (icon.path() != null) {
 				this.removeX = chooseX + chooseW + 6;
 				this.removeW = Ui.width(this.textRenderer, removeLabel) + 24;
 				boolean rh = Draw.inside(mouseX, mouseY, removeX, chooseY, removeW, BTN_H);
-				Surface.row(ctx, removeX, chooseY, removeW, BTN_H, rh ? D_BTN_HOVER : D_BTN);
+				Surface.row(ctx, removeX, chooseY, removeW, BTN_H, rh ? Theme.FIELD_HOVER : Theme.FIELD);
 				Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(removeLabel), removeX + 12, chooseY, BTN_H,
-					Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, D_TEXT);
+					Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
 			} else {
 				this.removeW = 0;
 			}
 			Ui.drawTop(ctx, this.textRenderer,
 				Ui.small(Ui.fitSmall(this.textRenderer, iconMsg, x + w - rx)),
-				rx, y + BTN_H + 3, Ui.TOP_SMALL, iconMsgWarn ? D_WARN : D_FAINT);
+				rx, y + BTN_H + 3, Ui.TOP_SMALL, iconMsgWarn ? Theme.WARN : Theme.TEXT_FAINT);
 		} else {
 			if (!dlgLine1.isEmpty()) {
 				Ui.drawTop(ctx, this.textRenderer, Ui.bold(Ui.fitBold(this.textRenderer, dlgLine1, w)),
-					x, y, Ui.TOP_BODY, dialog == Dialog.ERROR ? D_WARN : D_TEXT);
+					x, y, Ui.TOP_BODY, dialog == Dialog.ERROR ? Theme.WARN : Theme.TEXT);
 				y += lineH;
 			}
 			if (!dlgLine2.isEmpty()) {
 				Ui.drawTop(ctx, this.textRenderer, Ui.small(Ui.fitSmall(this.textRenderer, dlgLine2, w)),
-					x, y, Ui.TOP_SMALL, D_MUTED);
+					x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
 				y += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 6);
 			}
 			if (!dlgLine3.isEmpty()) {
 				// Zwei Zeilen Platz: Hinweis, was "Enable pack now" tut.
 				List<String> lines = Ui.wrap(this.textRenderer, dlgLine3, w);
 				for (int i = 0; i < Math.min(2, lines.size()); i++) {
-					Ui.drawTop(ctx, this.textRenderer, Ui.small(lines.get(i)), x, y, Ui.TOP_SMALL, D_FAINT);
+					Ui.drawTop(ctx, this.textRenderer, Ui.small(lines.get(i)), x, y, Ui.TOP_SMALL, Theme.TEXT_FAINT);
 					y += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 6);
 				}
 			}
@@ -754,8 +790,8 @@ public final class StudioScreen extends ScaledScreen {
 			boolean hov = Draw.inside(mouseX, mouseY, okX, okY, okW, BTN_H);
 			// Abwaehlen ist rot - es verwirft etwas. Alles andere blau.
 			int fill = dialog == Dialog.CLEAR
-				? (hov ? 0xFFC8382F : Theme.WARN)
-				: (hov ? 0xFF2B97F0 : Theme.TOGGLE_ON);
+				? (hov ? hoverOf(Theme.WARN) : Theme.WARN)
+				: (hov ? hoverOf(Theme.TOGGLE_ON) : Theme.TOGGLE_ON);
 			Surface.row(ctx, okX, okY, okW, BTN_H, fill);
 			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.bold(okLabel), okX + 12, okY, BTN_H,
 				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFFFFFFFF);
@@ -767,14 +803,14 @@ public final class StudioScreen extends ScaledScreen {
 		this.noX = right - noW;
 		this.noY = by;
 		boolean hov = Draw.inside(mouseX, mouseY, noX, noY, noW, BTN_H);
-		Surface.row(ctx, noX, noY, noW, BTN_H, hov ? D_BTN_HOVER : D_BTN);
+		Surface.row(ctx, noX, noY, noW, BTN_H, hov ? Theme.FIELD_HOVER : Theme.FIELD);
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(noLabel), noX + 12, noY, BTN_H,
-			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, D_TEXT);
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
 
 		if (dialog == Dialog.NAME && !dlgLine2.isEmpty()) {
 			Ui.drawCenteredIn(ctx, this.textRenderer,
 				Ui.small(Ui.fitSmall(this.textRenderer, dlgLine2, noX - 10 - x)), x, by, BTN_H,
-				Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, D_FAINT);
+				Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
 		}
 	}
 
@@ -1065,9 +1101,11 @@ public final class StudioScreen extends ScaledScreen {
 		if (total <= h || h <= 0) {
 			return;
 		}
-		Draw.roundedRect(ctx, x, top, BAR_W, h, 2, 0x14000000);
+		// Aus der Palette: Schwarz auf Schwarz war im dunklen Thema
+		// unsichtbar - man sah nicht, dass sich die Liste rollen laesst.
+		Draw.roundedRect(ctx, x, top, BAR_W, h, 2, Theme.DIVIDER);
 		Draw.roundedRect(ctx, x, thumbY(top, h, total, scroll), BAR_W, thumbH(h, total), 2,
-			active ? 0x73000000 : 0x40000000);
+			Anim.alpha(Theme.TEXT_FAINT, active ? 0.95F : 0.6F));
 	}
 
 	/** Klick auf eine Leiste: Griff festhalten, oder dorthin springen. */
@@ -1137,7 +1175,7 @@ public final class StudioScreen extends ScaledScreen {
 		Draw.roundedRect(ctx, volTrackX, mid - 2, VOL_TRACK_W, 4, 2, Theme.TOGGLE_OFF);
 		Draw.roundedRect(ctx, volTrackX, mid - 2, Math.max(4, filled), 4, 2, Theme.TOGGLE_ON);
 		boolean hover = volDragging || Draw.inside(mouseX, mouseY, volTrackX - 6, volY, VOL_TRACK_W + 12, h);
-		Draw.dot(ctx, volTrackX + filled, mid, hover ? 6 : 5, 0xFFFFFFFF);
+		Draw.dot(ctx, volTrackX + filled, mid, hover ? 6 : 5, Theme.TOGGLE_KNOB);
 		Draw.dot(ctx, volTrackX + filled, mid, hover ? 4 : 3, Theme.TOGGLE_ON);
 		String pct = Math.round(SoundPreview.volume() * 100) + " %";
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(pct), volTrackX + VOL_TRACK_W + 12, volY, h,
