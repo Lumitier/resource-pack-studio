@@ -134,9 +134,13 @@ public final class ItemDiscovery {
 			out.add(found);
 		}
 		TINTS = Map.copyOf(tints);
+		int textures = addTextures(pack, out);
+		for (String dim : StudioItems.SKY_DIMS) {
+			out.add(StudioItems.sky(dim));
+		}
 		int sounds = addSounds(pack, out);
-		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] {} entries: {} block(s), {} sound(s), the rest items. {} item(s) skipped (chests, beds, heads ...).",
-			out.size(), cubes, sounds, skipped);
+		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] {} entries: {} block(s), {} other texture(s), {} sound(s), the rest items. {} item(s) skipped (chests, beds, heads ...).",
+			out.size(), cubes, textures, sounds, skipped);
 		return out;
 	}
 
@@ -299,6 +303,55 @@ public final class ItemDiscovery {
 			out.add(StudioItem.flat(StudioItems.SOUND_ID + rel, group, p, List.of()));
 		}
 		return paths.size();
+	}
+
+	/**
+	 * ALLE uebrigen Texturen des Spiels - alles, was ein Resource Pack
+	 * aendern kann und noch keinen Eintrag hat: Lava, Wasser, Feuer,
+	 * Portal, Sonne und Mond, Mobs, Oberflaeche (Herzen, Hotbar ...),
+	 * Partikel, Gemaelde, Effekt-Symbole, Bogen beim Spannen ...
+	 *
+	 * Gelesen aus Minecrafts Standard-Pack, also genau die Bilder, die es im
+	 * Spiel gibt. Was schon zu einem Item, Block oder einer Ruestung gehoert,
+	 * kommt nicht doppelt.
+	 *
+	 * Gruppe: der oberste Ordner (block, entity, gui ...). Animierte
+	 * Texturen (Lava, Wasser) sind normale Bilder mit .mcmeta daneben - die
+	 * nimmt PackBuilder automatisch mit.
+	 */
+	private static int addTextures(ResourcePack pack, List<StudioItem> out) {
+		Set<String> covered = new HashSet<>();
+		for (StudioItem it : out) {
+			for (StudioItem.Part part : it.parts()) {
+				covered.add(part.modern());
+			}
+		}
+		java.util.TreeSet<String> paths = new java.util.TreeSet<>();
+		try {
+			pack.findResources(ResourceType.CLIENT_RESOURCES, Identifier.DEFAULT_NAMESPACE, "textures",
+				(id, supplier) -> {
+					String p = id.getPath();
+					if (p.endsWith(".png")) {
+						paths.add(p.substring("textures/".length(), p.length() - 4));
+					}
+				});
+		} catch (Throwable e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not list the vanilla textures.", e);
+		}
+		int n = 0;
+		for (String modern : paths) {
+			if (covered.contains(modern)) {
+				continue;
+			}
+			int slash = modern.indexOf('/');
+			String folder = slash > 0 ? modern.substring(0, slash) : "";
+			// Bloecke und Items hatten in 1.8 andere Ordner und teils
+			// andere Namen - alles andere liegt in alten Packs am selben Ort.
+			List<String> legacy = folder.equals("block") || folder.equals("item") ? legacyOf(modern) : List.of();
+			out.add(StudioItem.flat(StudioItems.TEX_ID + modern, StudioItems.TEX_GROUP + folder, modern, legacy));
+			n++;
+		}
+		return n;
 	}
 
 	/** 1.8 hatte "items"/"blocks" statt "item"/"block" - und teils andere Namen. */

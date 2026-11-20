@@ -3,7 +3,7 @@
   "id": "resourcepackstudio",
   "version": "${version}",
   "name": "Resource Pack Studio",
-  "description": "Browse every texture your resource packs have for an item, pick your favourites and build your own pack from them.",
+  "description": "Browse everything your resource packs change - items, blocks, lava and water, mobs, the GUI, sounds and custom skies - pick your favourites and build your own pack from them.",
   "authors": [
     "Lumitier"
   ],
@@ -25,6 +25,9 @@
     "minecraft": "~1.21.11",
     "java": ">=21",
     "fabric-api": "*",
-    "lumilib": ">=2.0.0"
+    "lumilib": ">=1.5.4"
+  },
+  "suggests": {
+    "skyboxify": "*"
   }
 }

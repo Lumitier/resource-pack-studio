@@ -37,6 +37,8 @@ import java.util.zip.ZipOutputStream;
  *    1.8-Packs landen dabei automatisch am neuen Ort mit neuem Namen
  *    (items/wood_sword.png -> item/wooden_sword.png).
  *  - eine .png.mcmeta daneben, wenn die Quelle eine hat (Animationen).
+ *  - Himmel: der ganze Ordner der Dimension (sky1.properties, Bilder ...)
+ *    unter optifine/sky/<dimension>/ - dort liest Skyboxify ihn.
  *  - credits.txt: welches Bild aus welchem Pack stammt.
  *  - pack.png, wenn ein Bild gewaehlt wurde (unveraendert uebernommen).
  *
@@ -142,8 +144,15 @@ public final class PackBuilder {
 		// Ruestungs-Lage 1 (Helm, Brust, Schuhe): Bildpfad -> gewaehlte Teile.
 		// Wird unten zu EINEM Bild zusammengesetzt (WornComposer).
 		Map<String, List<Object[]>> worn = new LinkedHashMap<>();
+		// Himmel: Dimension -> gewaehlte Variante. Ein ganzer Ordner, kein Bild.
+		Map<String, PackScanner.Variant> skies = new LinkedHashMap<>();
 		for (Map.Entry<StudioItem, PackScanner.Variant> e : sel.entrySet()) {
 			StudioItem item = e.getKey();
+			if (item.sky()) {
+				skies.put(item.id().substring(com.lumitier.resourcepackstudio.scan.StudioItems.SKY_ID.length()),
+					e.getValue());
+				continue;
+			}
 			List<StudioItem.Part> parts = item.parts();
 			EntityModels.Piece piece = WornComposer.pieceOf(item);
 			if (piece != null) {
@@ -220,6 +229,14 @@ public final class PackBuilder {
 				}
 			}
 
+			for (Map.Entry<String, PackScanner.Variant> e : skies.entrySet()) {
+				int n = writeSky(zip, e.getKey(), e.getValue());
+				if (n > 0) {
+					written++;
+					credits.add("sky " + e.getKey() + " (" + n + " file(s))  <-  " + e.getValue().pack().name());
+				}
+			}
+
 			for (Map.Entry<StudioItem, Map<String, String>> e : remaps.entrySet()) {
 				if (!ModelCopies.write(zip, e.getKey(), e.getValue())) {
 					ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] {}: no model to redirect - "
@@ -247,6 +264,57 @@ public final class PackBuilder {
 		Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
 		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] Created {} with {} texture(s).", target, written);
 		return new Built(target, name, written, null);
+	}
+
+	/**
+	 * Kopiert den Himmel-Ordner einer Dimension aus dem Pack - alle Dateien
+	 * darin, auch in Unterordnern. Landet immer unter optifine/sky/, auch
+	 * wenn das Pack noch den alten MCPatcher-Ordner hatte; Verweise in den
+	 * .properties werden dafuer mit angepasst.
+	 *
+	 * @return wie viele Dateien kopiert wurden
+	 */
+	private static int writeSky(ZipOutputStream zip, String dim, PackScanner.Variant v) throws IOException {
+		String entry = v.entry();
+		int slash = entry.lastIndexOf('/');
+		if (slash < 0) {
+			return 0;
+		}
+		String folder = entry.substring(0, slash + 1);
+		String target = "assets/minecraft/optifine/sky/" + dim + "/";
+		Map<String, byte[]> files = new LinkedHashMap<>();
+		if (v.pack().zip()) {
+			try (ZipFile z = new ZipFile(v.pack().path().toFile())) {
+				java.util.Enumeration<? extends ZipEntry> en = z.entries();
+				while (en.hasMoreElements()) {
+					ZipEntry ze = en.nextElement();
+					if (!ze.isDirectory() && ze.getName().startsWith(folder)) {
+						try (InputStream in = z.getInputStream(ze)) {
+							files.put(ze.getName().substring(folder.length()), in.readAllBytes());
+						}
+					}
+				}
+			}
+		} else {
+			Path dir = v.pack().path().resolve(folder);
+			if (Files.isDirectory(dir)) {
+				try (java.util.stream.Stream<Path> walk = Files.walk(dir, 4)) {
+					for (Path f : (Iterable<Path>) walk.filter(Files::isRegularFile)::iterator) {
+						files.put(dir.relativize(f).toString().replace('\\', '/'), Files.readAllBytes(f));
+					}
+				}
+			}
+		}
+		for (Map.Entry<String, byte[]> f : files.entrySet()) {
+			byte[] data = f.getValue();
+			if (f.getKey().endsWith(".properties")) {
+				data = new String(data, StandardCharsets.ISO_8859_1)
+					.replace("mcpatcher/sky", "optifine/sky")
+					.getBytes(StandardCharsets.ISO_8859_1);
+			}
+			put(zip, target + f.getKey(), data);
+		}
+		return files.size();
 	}
 
 	private static String mcmeta(String name) {

@@ -38,6 +38,32 @@ public final class StudioItems {
 	/** Kennung eines Sounds: "sound:" + Pfad ohne sounds/ und .ogg ("sound:damage/hit1"). */
 	public static final String SOUND_ID = "sound:";
 
+	/**
+	 * Alle uebrigen Texturen: "tex:" + Pfad unter textures/ ohne .png
+	 * ("tex:block/lava_still"). Gruppe "tex/" + oberster Ordner ("tex/block").
+	 */
+	public static final String TEX_ID = "tex:";
+	public static final String TEX_GROUP = "tex/";
+
+	/**
+	 * Himmel: "sky:" + Ordner der Dimension im OptiFine-Format
+	 * ("sky:world0" = Oberwelt, "sky:world-1" = Nether, "sky:world1" = Ende).
+	 */
+	public static final String SKY_ID = "sky:";
+	public static final String SKY = "sky";
+
+	/** Wo Custom Skies in einem Pack liegen - OptiFine, und davor MCPatcher. */
+	public static final String[] SKY_ROOTS = {"assets/minecraft/optifine/sky/", "assets/minecraft/mcpatcher/sky/"};
+
+	/** Die drei Dimensionen, in der Reihenfolge der Sidebar. */
+	public static final String[] SKY_DIMS = {"world0", "world-1", "world1"};
+
+	/** Ein Himmel-Eintrag. Der Teil ist nur ein Platzhalter - gesucht wird nach dem Ordner. */
+	public static StudioItem sky(String dim) {
+		return new StudioItem(SKY_ID + dim, SKY,
+			List.of(new StudioItem.Part("optifine/sky/" + dim, List.of(), true)), null, null);
+	}
+
 	private static final List<StudioItem> ALL = build();
 
 	public static List<StudioItem> all() {

@@ -65,5 +65,13 @@
   "resourcepackstudio.worn.diamond": "Diamond",
   "resourcepackstudio.worn.netherite": "Netherite",
   "resourcepackstudio.worn.turtle": "Turtle",
-  "resourcepackstudio.worn.elytra": "Elytra"
+  "resourcepackstudio.worn.elytra": "Elytra",
+  "resourcepackstudio.studio.cat.textures": "Textures",
+  "resourcepackstudio.studio.cat.skies": "Skies",
+  "resourcepackstudio.sky.world0": "Overworld",
+  "resourcepackstudio.sky.world-1": "Nether",
+  "resourcepackstudio.sky.world1": "The End",
+  "resourcepackstudio.sky.needs": "Needs Skyboxify %s to work",
+  "resourcepackstudio.sky.wrong": "Needs Skyboxify %s to work - you have %s",
+  "resourcepackstudio.sky.ok": "Skyboxify %s found - custom skies will show in game"
 }

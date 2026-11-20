@@ -105,6 +105,24 @@ public record StudioItem(String id, String group, List<Part> parts, List<Box> bo
 		return parts.get(0).modern().startsWith(SOUNDS);
 	}
 
+	/**
+	 * Ein Himmel (Custom Sky im OptiFine-Format, wie Skyboxify ihn liest).
+	 * Kein einzelnes Bild, sondern ein ganzer Ordner: Eigenschaften-Dateien
+	 * und die Bilder dazu. Siehe StudioItems.SKY_ID.
+	 */
+	public boolean sky() {
+		return id.startsWith(StudioItems.SKY_ID);
+	}
+
+	/**
+	 * Irgendeine Textur, die keinen eigenen Eintrag als Item, Block oder
+	 * Ruestung hat: Lava, Wasser, Feuer, Sonne, Mobs, Oberflaeche ...
+	 * Siehe StudioItems.TEX_ID.
+	 */
+	public boolean texture() {
+		return id.startsWith(StudioItems.TEX_ID);
+	}
+
 	/** Hauptbild - das erste. */
 	public String modern() {
 		return parts.get(0).modern();

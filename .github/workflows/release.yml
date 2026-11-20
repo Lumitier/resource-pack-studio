@@ -1,0 +1,165 @@
+# Automatic GitHub release.
+#
+# On every push to main: read the version from gradle.properties
+# (mod_version, or plugin_version for the Paper plugin). If there is no
+# release for that version yet, build the jar and publish it as a release.
+# If there already is one, nothing happens - so pushes that don't change
+# the version (README, small fixes) never create a release.
+#
+# To release: raise the version in gradle.properties, commit, push. No tags.
+#
+# The release notes are the commit messages since the previous release.
+
+name: Release
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          v=$(grep -E '^(mod_version|plugin_version)=' gradle.properties | head -1 | cut -d= -f2 | tr -d '[:space:]\r' || true)
+          if [ -z "$v" ]; then
+            echo "No mod_version or plugin_version in gradle.properties" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+      - name: Already released?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          # Older releases were made by hand - their tag may be "2.0.0"
+          # instead of "v2.0.0". Both count, so no version is released twice.
+          if gh release view "v$v" >/dev/null 2>&1 || gh release view "$v" >/dev/null 2>&1 \
+             || git rev-parse -q --verify "refs/tags/v$v" >/dev/null || git rev-parse -q --verify "refs/tags/$v" >/dev/null; then
+            echo "Release v${{ steps.version.outputs.version }} exists - nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Java
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 21 for the Paper plugin's toolchain, 25 for Loom (the last one is the default).
+          java-version: |
+            21
+            25
+
+      - name: Pick Gradle version
+        if: steps.check.outputs.skip == 'false'
+        id: gradle
+        run: |
+          g=9.8.2
+          f=gradle/wrapper/gradle-wrapper.properties
+          if [ -f "$f" ]; then
+            found=$(grep -oE 'gradle-[0-9.]+-(bin|all)\.zip' "$f" | sed -E 's/gradle-([0-9.]+)-.*/\1/')
+            [ -n "$found" ] && g=$found
+          fi
+          echo "version=$g" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Gradle
+        if: steps.check.outputs.skip == 'false'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ steps.gradle.outputs.version }}
+
+      # The mods build against LumiLib from the local Maven folder. On
+      # GitHub that folder is empty, so LumiLib is built from its own repo
+      # first and published there under the version this mod asks for.
+      - name: LumiLib version this mod needs
+        if: steps.check.outputs.skip == 'false'
+        id: lumilib
+        run: |
+          # Comment lines don't count (LumiLib's own build.gradle mentions itself in one).
+          v=$(grep -vE '^\s*//' build.gradle | grep -oE 'com\.lumitier\.lumilib:lumilib:[^"$)]+' | head -1 | cut -d: -f3 || true)
+          if [ -z "$v" ] && grep -q 'com.lumitier.lumilib:lumilib:\${' build.gradle; then
+            v=$(grep -E '^lumilib_version=' gradle.properties | cut -d= -f2 | tr -d '[:space:]\r')
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Check out LumiLib
+        if: steps.check.outputs.skip == 'false' && steps.lumilib.outputs.version != ''
+        uses: actions/checkout@v4
+        with:
+          repository: Lumitier/lumilib
+          path: .lumilib
+
+      - name: Publish LumiLib to the local Maven folder
+        if: steps.check.outputs.skip == 'false' && steps.lumilib.outputs.version != ''
+        working-directory: .lumilib
+        run: gradle publishToMavenLocal -Pmod_version=${{ steps.lumilib.outputs.version }} --no-daemon -Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64
+
+      - name: Build
+        if: steps.check.outputs.skip == 'false'
+        # fromEnv lets a Java toolchain request (the Paper plugin asks for 21)
+        # find the JDKs that setup-java installed.
+        run: gradle build --no-daemon -Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64
+
+      - name: Find the jar
+        if: steps.check.outputs.skip == 'false'
+        id: jar
+        run: |
+          jar=$(ls build/libs/*.jar | grep -vE -- '-(sources|dev|javadoc)\.jar$' | head -1)
+          if [ -z "$jar" ]; then
+            echo "No jar in build/libs" >&2
+            exit 1
+          fi
+          echo "path=$jar" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          name=""
+          if [ -f src/main/resources/fabric.mod.json ]; then
+            name=$(jq -r '.name // empty' src/main/resources/fabric.mod.json)
+          elif [ -f src/main/resources/plugin.yml ]; then
+            name=$(grep -E '^name:' src/main/resources/plugin.yml | head -1 | cut -d: -f2- | tr -d " \"'\r")
+          fi
+          [ -z "$name" ] && name="${GITHUB_REPOSITORY#*/}"
+          echo "TITLE=$name ${{ steps.version.outputs.version }}" >> "$GITHUB_ENV"
+
+          prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            git log "$prev"..HEAD --no-merges --pretty='- %s' > notes.md
+          else
+            git log -20 --no-merges --pretty='- %s' > notes.md
+          fi
+          [ -s notes.md ] || echo "- Version ${{ steps.version.outputs.version }}" > notes.md
+          cat notes.md
+
+      - name: Publish release
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "${{ steps.version.outputs.version }}" in *-*) pre="--prerelease" ;; esac
+          gh release create "v${{ steps.version.outputs.version }}" "${{ steps.jar.outputs.path }}" \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --notes-file notes.md \
+            $pre

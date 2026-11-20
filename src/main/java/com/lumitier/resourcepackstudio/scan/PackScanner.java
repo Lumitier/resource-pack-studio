@@ -233,7 +233,9 @@ public final class PackScanner {
 			}
 		} else {
 			// Nur die Ordner, in denen gesucht wird - nicht das ganze Pack.
-			for (String dir : new String[] {"assets/minecraft/textures", "assets/minecraft/sounds"}) {
+			// optifine/mcpatcher: Custom Skies.
+			for (String dir : new String[] {"assets/minecraft/textures", "assets/minecraft/sounds",
+					"assets/minecraft/optifine/sky", "assets/minecraft/mcpatcher/sky"}) {
 				Path root = pack.path().resolve(dir);
 				if (!Files.isDirectory(root)) {
 					continue;
@@ -248,6 +250,14 @@ public final class PackScanner {
 		}
 		int n = 0;
 		for (Map.Entry<StudioItem, List<Variant>> en : variants.entrySet()) {
+			if (en.getKey().sky()) {
+				n++;
+				Variant sky = sky(pack, en.getKey(), names);
+				if (sky != null) {
+					en.getValue().add(sky);
+				}
+				continue;
+			}
 			String[][] p = paths.get(n);
 			boolean[][] l = legacyFlags.get(n);
 			n++;
@@ -270,6 +280,54 @@ public final class PackScanner {
 				en.getValue().add(new Variant(pack, Collections.unmodifiableList(Arrays.asList(found)), legacy));
 			}
 		}
+	}
+
+	/**
+	 * Hat das Pack einen Himmel fuer diese Dimension? Erkennbar an
+	 * mindestens einer .properties-Datei im Ordner (sky1.properties ...).
+	 *
+	 * Der Eintrag ist das Vorschaubild: sky1.png, wenn es das gibt, sonst
+	 * das erste Bild im Ordner. Aus seinem Pfad ergibt sich beim Bauen
+	 * der Ordner, der komplett kopiert wird.
+	 */
+	private static Variant sky(Pack pack, StudioItem item, Map<String, String> names) {
+		String dim = item.id().substring(StudioItems.SKY_ID.length());
+		for (String root : StudioItems.SKY_ROOTS) {
+			String dir = root + dim + "/";
+			boolean props = false;
+			String image = null;
+			String sky1 = null;
+			for (Map.Entry<String, String> e : names.entrySet()) {
+				String k = e.getKey();
+				// Nur Dateien direkt im Ordner, keine Unterordner.
+				if (!k.startsWith(dir) || k.indexOf('/', dir.length()) >= 0) {
+					continue;
+				}
+				if (k.endsWith(".properties")) {
+					props = true;
+				} else if (k.endsWith(".png")) {
+					if (k.endsWith("/sky1.png")) {
+						sky1 = e.getValue();
+					} else if (image == null || e.getValue().compareTo(image) < 0) {
+						image = e.getValue();
+					}
+				}
+			}
+			if (props) {
+				String preview = sky1 != null ? sky1 : image;
+				if (preview == null) {
+					// Ohne Bild trotzdem auffuehren - dann eben ohne Vorschau.
+					for (Map.Entry<String, String> e : names.entrySet()) {
+						if (e.getKey().startsWith(dir) && e.getKey().endsWith(".properties")) {
+							preview = e.getValue();
+							break;
+						}
+					}
+				}
+				return new Variant(pack, List.of(preview), root.contains("mcpatcher"));
+			}
+		}
+		return null;
 	}
 
 	// ------------------------------------------------------------------

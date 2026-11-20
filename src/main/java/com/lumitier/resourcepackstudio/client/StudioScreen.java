@@ -264,6 +264,24 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		this.itemKeys = new String[n];
 		for (int i = 0; i < n; i++) {
 			StudioItem it = items.get(i);
+			if (it.texture()) {
+				// Pfad ohne den obersten Ordner, lesbar gemacht:
+				// "tex:block/lava_still" -> "Lava still",
+				// "tex:entity/chest/normal" -> "Chest / Normal".
+				String rel = it.id().substring(StudioItems.TEX_ID.length());
+				int slash = rel.indexOf('/');
+				String inner = slash > 0 ? rel.substring(slash + 1) : rel;
+				itemNames[i] = prettyPath(inner);
+				itemKeys[i] = (itemNames[i] + " " + rel.replace('_', ' ').replace('/', ' ')).toLowerCase(Locale.ROOT)
+					+ " " + rel;
+				continue;
+			}
+			if (it.sky()) {
+				String dim = it.id().substring(StudioItems.SKY_ID.length());
+				itemNames[i] = Text.translatable("resourcepackstudio.sky." + dim).getString();
+				itemKeys[i] = (itemNames[i] + " sky skybox himmel " + dim).toLowerCase(Locale.ROOT);
+				continue;
+			}
 			if (it.sound()) {
 				// Pfad ohne den Gruppenordner: "damage/hit1" -> "hit1".
 				String rel = it.id().substring(StudioItems.SOUND_ID.length());
@@ -308,12 +326,15 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	// mit Pfeil zum Auf- und Zuklappen. Waehrend gesucht wird, sind alle
 	// offen - sonst saehe man Treffer in zugeklappten Kategorien nicht.
 
-	// Reihenfolge in der Sidebar: Items, Blocks, Worn armor, Sounds.
+	// Reihenfolge in der Sidebar: Items, Blocks, Worn armor, Textures,
+	// Skies, Sounds.
 	private static final int CAT_ITEMS = 0;
 	private static final int CAT_BLOCKS = 1;
 	private static final int CAT_WORN = 2;
-	private static final int CAT_SOUNDS = 3;
-	private static final int CAT_COUNT = 4;
+	private static final int CAT_TEXTURES = 3;
+	private static final int CAT_SKIES = 4;
+	private static final int CAT_SOUNDS = 5;
+	private static final int CAT_COUNT = 6;
 
 	/** rowItem-Wert fuer den Kopf einer Kategorie: -10 - Kategorie. */
 	private static final int CAT_ROW = -10;
@@ -342,6 +363,12 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		if (it.sound()) {
 			return CAT_SOUNDS;
 		}
+		if (it.sky()) {
+			return CAT_SKIES;
+		}
+		if (it.texture()) {
+			return CAT_TEXTURES;
+		}
 		if (it.group().startsWith(StudioItems.WORN)) {
 			return CAT_WORN;
 		}
@@ -354,10 +381,25 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		"resourcepackstudio.studio.cat.items",
 		"resourcepackstudio.studio.cat.blocks",
 		"resourcepackstudio.studio.cat.worn",
+		"resourcepackstudio.studio.cat.textures",
+		"resourcepackstudio.studio.cat.skies",
 		"resourcepackstudio.studio.cat.sounds"};
 
 	private void buildRows() {
 		buildRows(true);
+	}
+
+	/** "chest/normal_left" -> "Chest / Normal left". */
+	private static String prettyPath(String path) {
+		StringBuilder sb = new StringBuilder();
+		for (String seg : path.split("/")) {
+			if (sb.length() > 0) {
+				sb.append(" / ");
+			}
+			String w = seg.replace('_', ' ');
+			sb.append(w.isEmpty() ? w : Character.toUpperCase(w.charAt(0)) + w.substring(1));
+		}
+		return sb.toString();
 	}
 
 	/** "damage" -> "Damage", "entity" -> "Entity". */
@@ -399,10 +441,12 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			String group = null;
 			for (int i : hits) {
 				StudioItem it = items.get(i);
-				if (cat != CAT_BLOCKS && !it.group().equals(group)) {
+				if (cat != CAT_BLOCKS && cat != CAT_SKIES && !it.group().equals(group)) {
 					group = it.group();
 					labels.add(cat == CAT_SOUNDS
 						? folderLabel(group.substring(StudioItems.SOUND_GROUP.length()))
+						: cat == CAT_TEXTURES
+						? folderLabel(group.substring(StudioItems.TEX_GROUP.length()).replace('_', ' '))
 						: cat == CAT_WORN
 						? Text.translatable("resourcepackstudio.worn." + group.substring(StudioItems.WORN.length() + 1)).getString()
 						: Text.translatable("resourcepackstudio.studio.group." + group).getString());
@@ -1035,6 +1079,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 		if (item.sound()) {
 			renderVolume(ctx, mouseX, mouseY);
+		} else if (item.sky()) {
+			renderSkyHint(ctx);
 		}
 
 		ctx.enableScissor(cx, gt, cx + cw, listBottom);
@@ -1158,7 +1204,41 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	/** Oberkante der Karten: bei Sounds unter der Lautstaerke-Zeile. */
 	private int gridTop() {
-		return !items.isEmpty() && items.get(selected).sound() ? listTop + VOL_ROW : listTop;
+		if (items.isEmpty()) {
+			return listTop;
+		}
+		StudioItem it = items.get(selected);
+		return it.sound() ? listTop + VOL_ROW : it.sky() ? listTop + SKY_ROW : listTop;
+	}
+
+	// ---- Hinweis bei Himmeln ---------------------------------------------
+
+	private static final int SKY_ROW = 26;
+	/** Die Version von Skyboxify, mit der wir Himmel getestet haben. */
+	private static final String SKYBOXIFY = "3.4";
+
+	/**
+	 * Unter dem Titel: ob die Himmel im Spiel zu sehen sein werden. Das
+	 * entscheidet nicht das Pack, sondern ob Skyboxify da ist - Minecraft
+	 * selbst kennt keine eigenen Himmel.
+	 */
+	private void renderSkyHint(DrawContext ctx) {
+		String installed = skyboxifyVersion();
+		boolean ok = installed != null && installed.startsWith(SKYBOXIFY);
+		String text = ok
+			? Text.translatable("resourcepackstudio.sky.ok", SKYBOXIFY).getString()
+			: installed == null
+			? Text.translatable("resourcepackstudio.sky.needs", SKYBOXIFY).getString()
+			: Text.translatable("resourcepackstudio.sky.wrong", SKYBOXIFY, installed).getString();
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(Ui.fit(this.textRenderer, text, cw)), cx, listTop, 20,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, ok ? Theme.TEXT_MUTED : Theme.WARN);
+	}
+
+	/** Installierte Skyboxify-Version, oder null ohne Skyboxify. */
+	private static String skyboxifyVersion() {
+		return net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("skyboxify")
+			.map(c -> c.getMetadata().getVersion().getFriendlyString())
+			.orElse(null);
 	}
 
 	/** "Preview volume" mit Schieber, 0 bis 200 %. */
@@ -1241,6 +1321,27 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			drawPlay(ctx, x, y, size);
 			return;
 		}
+		if (item.sky()) {
+			// Vanilla hat keine Himmel-Bilder - dafuer ein schlichter
+			// Verlauf, damit die Karte nicht leer aussieht.
+			Textures.Tex t = v == null ? null : Textures.variant(v, 0);
+			if (t != null) {
+				drawFitted(ctx, t, x, y, size, false);
+			} else if (v == null) {
+				drawVanillaSky(ctx, x, y, size);
+			}
+			return;
+		}
+		if (item.texture()) {
+			// Beliebige Textur: eingepasst, nicht verzerrt. Animierte
+			// (Lava, Wasser, Feuer) liegen als Streifen untereinander -
+			// davon nur das erste Bild.
+			Textures.Tex t = tex(item, v, 0);
+			if (t != null) {
+				drawFitted(ctx, t, x, y, size, true);
+			}
+			return;
+		}
 		if (!item.cube() && item.modern().startsWith("entity/")) {
 			// Faltbogen (Kiste, Bett, Schild ...): das ganze Bild, eingepasst.
 			Textures.Tex t = tex(item, v, 0);
@@ -1303,6 +1404,37 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 					dz * k, -dz * k / 2, 0, dy * k, shade(item, b.east(), 0xA8));
 			}
 		}
+	}
+
+	/**
+	 * Bild eingepasst in ein Quadrat, Seitenverhaeltnis bleibt.
+	 *
+	 * @param frames ist das Bild ein senkrechter Streifen gleich grosser
+	 *               Quadrate (Animation), nur das erste zeichnen
+	 */
+	private static void drawFitted(DrawContext ctx, Textures.Tex t, int x, int y, int size, boolean frames) {
+		int sw = t.w();
+		int sh = t.h();
+		if (frames && sh > sw && sh % sw == 0) {
+			sh = sw;
+		}
+		float sc = size / (float) Math.max(sw, sh);
+		int dw = Math.max(1, Math.round(sw * sc));
+		int dh = Math.max(1, Math.round(sh * sc));
+		ctx.drawTexture(RenderPipelines.GUI_TEXTURED, t.id(), x + (size - dw) / 2, y + (size - dh) / 2,
+			0.0F, 0.0F, dw, dh, sw, sh, t.w(), t.h());
+	}
+
+	/** Platzhalter fuer den normalen Himmel: Blau nach unten heller, mit Horizont. */
+	private static void drawVanillaSky(DrawContext ctx, int x, int y, int size) {
+		int pad = Math.max(1, size / 10);
+		int x1 = x + pad;
+		int y1 = y + pad;
+		int x2 = x + size - pad;
+		int y2 = y + size - pad;
+		int horizon = y1 + (y2 - y1) * 2 / 3;
+		ctx.fillGradient(x1, y1, x2, horizon, 0xFF5B8DE8, 0xFFA9C8F5);
+		ctx.fillGradient(x1, horizon, x2, y2, 0xFFC4D9F7, 0xFF8FB0D8);
 	}
 
 	/** Seitenhelligkeit (0-255) mal Einfaerbung der Flaeche. */

@@ -65,5 +65,13 @@
   "resourcepackstudio.worn.diamond": "Diamant",
   "resourcepackstudio.worn.netherite": "Netherit",
   "resourcepackstudio.worn.turtle": "Schildkröte",
-  "resourcepackstudio.worn.elytra": "Elytren"
+  "resourcepackstudio.worn.elytra": "Elytren",
+  "resourcepackstudio.studio.cat.textures": "Texturen",
+  "resourcepackstudio.studio.cat.skies": "Himmel",
+  "resourcepackstudio.sky.world0": "Oberwelt",
+  "resourcepackstudio.sky.world-1": "Nether",
+  "resourcepackstudio.sky.world1": "Das Ende",
+  "resourcepackstudio.sky.needs": "Braucht Skyboxify %s, um zu funktionieren",
+  "resourcepackstudio.sky.wrong": "Braucht Skyboxify %s, um zu funktionieren - installiert ist %s",
+  "resourcepackstudio.sky.ok": "Skyboxify %s gefunden - eigene Himmel erscheinen im Spiel"
 }
