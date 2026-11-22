@@ -158,5 +158,7 @@
   "resourcepackstudio.mine.other": "Choose another version",
   "resourcepackstudio.mine.back": "Back to %s",
   "resourcepackstudio.mine.added": "%s added to %s",
-  "resourcepackstudio.mine.editing_hint": "You're editing %s - the version you click goes into the pack"
+  "resourcepackstudio.mine.editing_hint": "You're editing %s - the version you click goes into the pack",
+  "resourcepackstudio.mine.add_to": "Add to %s",
+  "resourcepackstudio.mine.take_out": "Remove from %s"
 }

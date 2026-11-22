@@ -652,6 +652,18 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		return out;
 	}
 
+	/** Hat "My Drawings" schon ein Bild fuer diesen Eintrag? Dann das waehlen. */
+	private static boolean selectExistingDrawing(StudioItem item) {
+		java.nio.file.Path drawings = EditorScreen.drawingsPack();
+		for (PackScanner.Variant v : StudioIndex.variants(item)) {
+			if (v.pack().path().equals(drawings)) {
+				StudioIndex.select(item, v);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Nach Waehlen oder Entfernen: Zaehler, und beim Bearbeiten die Liste unter dem Pack. */
 	private void rebuildAfterPick() {
 		if (editing != null && !packPage && StudioIndex.selected(items.get(selected)) != null) {
@@ -1957,7 +1969,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	// Leiste unten, solange ein Pack bearbeitet wird (ausserhalb der Pack-Seite)
 	// ------------------------------------------------------------------
 
-	private int editBarX, editBarY, editBarW, editBackX, editBackW;
+	private int editBarX, editBarY, editBarW, editBackX, editBackW, editAddX, editAddW;
 	private static final int EDIT_BAR_H = 28;
 	/** "Goldene Axt hinzugefuegt" - kurz nach einem Klick auf eine Version. */
 	private String addedLabel;
@@ -1980,6 +1992,22 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.bold(back), editBackX + 10, editBarY + 4, bh,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFF1A1406);
 
+		// "Zu fett hinzufuegen" / "Aus fett nehmen" fuer das Item, das gerade offen ist.
+		StudioItem cur = items.get(selected);
+		boolean inPack = StudioIndex.selected(cur) != null;
+		this.editAddW = 0;
+		if (inPack || EditorScreen.editable(cur)) {
+			String add = Text.translatable(inPack ? "resourcepackstudio.mine.take_out" : "resourcepackstudio.mine.add_to",
+				editing.name()).getString();
+			this.editAddW = Ui.width(this.textRenderer, add) + 20;
+			this.editAddX = editBackX - 6 - editAddW;
+			boolean ha = Draw.inside(mouseX, mouseY, editAddX, editBarY + 4, editAddW, bh);
+			Surface.row(ctx, editAddX, editBarY + 4, editAddW, bh, ha ? Theme.FIELD_HOVER : Theme.FIELD);
+			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(add), editAddX + 10, editBarY + 4, bh,
+				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, inPack ? (ha ? Theme.WARN : Theme.TEXT_MUTED) : (ha ? Theme.TEXT : Theme.ACCENT));
+		}
+		int msgRight = editAddW > 0 ? editAddX : editBackX;
+
 		String msg;
 		int colour;
 		if (addedLabel != null && System.currentTimeMillis() - addedAt < 2500L) {
@@ -1991,7 +2019,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			colour = Theme.TEXT_MUTED;
 		}
 		int tx = editBarX + 6 + 16 + 8;
-		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(Ui.fit(this.textRenderer, msg, editBackX - tx - 8)),
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(Ui.fit(this.textRenderer, msg, msgRight - tx - 8)),
 			tx, editBarY, EDIT_BAR_H, Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, colour);
 	}
 
@@ -2539,6 +2567,24 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			return packPageClick(mx, my);
 		}
 		if (editing != null && Draw.inside(mx, my, editBarX, editBarY, editBarW, EDIT_BAR_H)) {
+			if (editAddW > 0 && Draw.inside(mx, my, editAddX, editBarY, editAddW, EDIT_BAR_H)) {
+				StudioItem cur = items.get(selected);
+				if (StudioIndex.selected(cur) != null) {
+					StudioIndex.select(cur, null);
+					this.addedLabel = null;
+					rebuildAfterPick();
+				} else if (selectExistingDrawing(cur)) {
+					// Es gibt schon eine Zeichnung dafuer - die nehmen, nicht ueberschreiben.
+					this.addedLabel = itemNames[selected];
+					this.addedAt = System.currentTimeMillis();
+					rebuildAfterPick();
+				} else if (EditorScreen.copyToDrawings(cur, null)) {
+					// Die Kopie wird nach der Suche gewaehlt und steht dann im Pack.
+					this.addedLabel = itemNames[selected];
+					this.addedAt = System.currentTimeMillis();
+				}
+				return true;
+			}
 			if (Draw.inside(mx, my, editBackX, editBarY, editBackW, EDIT_BAR_H)) {
 				this.packPage = true;
 				this.addHint = false;
