@@ -148,5 +148,6 @@
   "resourcepackstudio.mine.add_hint": "Wähl unten etwas aus - es kommt in %s",
   "resourcepackstudio.import.title": "PNG auswählen",
   "resourcepackstudio.import.card": "PNG importieren",
-  "resourcepackstudio.import.waiting": "Wird gewählt..."
+  "resourcepackstudio.import.waiting": "Wird gewählt...",
+  "resourcepackstudio.mine.remove": "Aus dem Pack nehmen"
 }

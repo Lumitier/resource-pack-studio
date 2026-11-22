@@ -394,13 +394,6 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	/** Unter dem geoeffneten eigenen Pack: was darin steckt (ENTRY_ROW - Item-Index). */
 	private static final int ENTRY_ROW = -200000;
-	/** Unter dem geoeffneten eigenen Pack: Hinzufuegen, Speichern, Schliessen. */
-	private static final int ACTION_ROW = -500;
-	private static final int ACT_ADD = 0;
-	private static final int ACT_SAVE = 1;
-	private static final int ACT_STOP = 2;
-	/** Breite des "x" rechts in einer Eintragszeile. */
-	private static final int REMOVE_W = 14;
 
 	private static boolean isPackRow(int row) {
 		return row <= PACK_ROW && row > ENTRY_ROW;
@@ -408,10 +401,6 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	private static boolean isEntryRow(int row) {
 		return row <= ENTRY_ROW;
-	}
-
-	private static boolean isActionRow(int row) {
-		return row <= ACTION_ROW && row > ACTION_ROW - 10;
 	}
 
 	private static boolean isCatRow(int row) {
@@ -549,12 +538,6 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 							idx.add(ENTRY_ROW - i);
 						}
 					}
-					String[] acts = {"resourcepackstudio.mine.add", "resourcepackstudio.mine.save", "resourcepackstudio.mine.stop"};
-					for (int a = 0; a < acts.length; a++) {
-						labels.add(Text.translatable(acts[a]).getString());
-						counts.add(null);
-						idx.add(ACTION_ROW - a);
-					}
 				}
 			}
 		}
@@ -646,10 +629,27 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		this.variants = new List[items.size()];
 		this.itemCounts = new String[items.size()];
 		for (int i = 0; i < items.size(); i++) {
-			variants[i] = StudioIndex.variants(items.get(i));
+			variants[i] = sources(items.get(i));
 			itemCounts[i] = variants[i].isEmpty() ? "" : Integer.toString(variants[i].size());
 		}
 		refreshLabels();
+	}
+
+	/**
+	 * Varianten zum Waehlen. Eigene, gebaute Packs sind Ergebnisse, keine
+	 * Quellen - sie erscheinen nur, wenn ihre Textur gerade gewaehlt ist
+	 * (alte Packs, deren Original es nicht mehr gibt).
+	 */
+	private static List<PackScanner.Variant> sources(StudioItem item) {
+		List<PackScanner.Variant> all = StudioIndex.variants(item);
+		PackScanner.Variant chosen = StudioIndex.selected(item);
+		List<PackScanner.Variant> out = new ArrayList<>(all.size());
+		for (PackScanner.Variant v : all) {
+			if (!v.pack().own() || v.equals(chosen)) {
+				out.add(v);
+			}
+		}
+		return out;
 	}
 
 	/** Nach Waehlen oder Entfernen: Zaehler, und beim Bearbeiten die Liste unter dem Pack. */
@@ -1202,7 +1202,12 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		}
 	}
 
+	private int lastMouseX, lastMouseY;
+
 	private void renderSidebar(DrawContext ctx, int mouseX, int mouseY) {
+		this.lastMouseX = mouseX;
+		this.lastMouseY = mouseY;
+		this.sideTip = null;
 		int x = sx + Metrics.PAD;
 		int w = sw - Metrics.PAD * 2;
 		int y = sy + Metrics.PAD;
@@ -1238,18 +1243,6 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				drawEntryRow(ctx, ENTRY_ROW - item, x, ry, w, inList, mouseX, mouseY);
 				continue;
 			}
-			if (isActionRow(item)) {
-				boolean h = inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H);
-				if (h) {
-					Surface.row(ctx, x + 6, ry, w - 2, Metrics.ROW_H, Theme.ROW_HOVER);
-				}
-				int act = ACTION_ROW - item;
-				String sym = act == ACT_ADD ? "+  " : act == ACT_SAVE ? "\u2713  " : "\u00d7  ";
-				Ui.drawCenteredIn(ctx, this.textRenderer,
-					Ui.text(Ui.fit(this.textRenderer, sym + rowLabel[i], w - 24)), x + 14, ry, Metrics.ROW_H,
-					Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, act == ACT_STOP ? Theme.TEXT_FAINT : (h ? Theme.TEXT : Theme.ACCENT));
-				continue;
-			}
 			if (item <= CAT_ROW) {
 				drawCategoryRow(ctx, i, CAT_ROW - item, x, ry, w,
 					inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H));
@@ -1268,6 +1261,15 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		}
 		Sdf.clip(null);
 		ctx.disableScissor();
+		if (sideTip != null) {
+			int tw = Ui.widthSmall(this.textRenderer, sideTip) + 12;
+			int tx = Math.min(sideTipX + 10, this.width - tw - 4);
+			int ty = sideTipY + 12;
+			Surface.row(ctx, tx, ty, tw, 16, Theme.PANEL | 0xFF000000);
+			Draw.roundedOutline(ctx, tx, ty, tw, 16, 3, Theme.DIVIDER);
+			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(sideTip), tx + 6, ty, 16,
+				Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT);
+		}
 		drawBar(ctx, sideBarX(), sideTop, sideBottom - sideTop, sideHeight, sideScroll,
 			dragBar == BAR_SIDE || hoverBar(mouseX, mouseY, sideBarX(), sideTop, sideBottom - sideTop));
 	}
@@ -1290,18 +1292,66 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			tx = ix + ITEM_ICON + Metrics.ROW_ICON_GAP;
 		}
 		int right = ix + iw;
-		if (hover) {
-			boolean onX = Draw.inside(mx, my, right - REMOVE_W, y, REMOVE_W + 4, Metrics.ROW_H);
-			Ui.drawCenteredLine(ctx, this.textRenderer, Ui.text("\u00d7"), right - REMOVE_W + 4, mid,
-				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, onX ? Theme.WARN : Theme.TEXT_MUTED);
-			right -= REMOVE_W;
+		int by = y + (Metrics.ROW_H - ICON_BTN) / 2;
+		int dim = hover ? Theme.TEXT_MUTED : Theme.TEXT_FAINT;
+		if (iconButton(ctx, G_CLOSE, right - ICON_BTN, by, mx, my, dim, Theme.WARN)) {
+			sideTip = Text.translatable("resourcepackstudio.mine.remove").getString();
+			sideTipX = mx;
+			sideTipY = my;
 		}
+		if (EditorScreen.editable(it)
+				&& iconButton(ctx, G_EDIT, right - 2 * ICON_BTN - 2, by, mx, my, dim, Theme.TEXT)) {
+			sideTip = Text.translatable("resourcepackstudio.editor.add").getString();
+			sideTipX = mx;
+			sideTipY = my;
+		}
+		right -= 2 * ICON_BTN + 4;
 		String label = Ui.fit(this.textRenderer, itemNames[item], right - tx - 2);
 		Ui.drawCenteredLine(ctx, this.textRenderer, Ui.text(label), tx, mid,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, item == selected ? Theme.TEXT : Theme.TEXT_MUTED);
 	}
 
-	/** Ein eigenes Pack: Name, rechts .zip oder Ordner. Hervorgehoben, wenn es gerade bearbeitet wird. */
+	// Kleine Symbole, 9x9 - Pixel fuer Pixel wie im Editor.
+	private static final String[] G_PLUS = {"....#....", "....#....", "....#....", "....#....", "#########",
+		"....#....", "....#....", "....#....", "....#...."};
+	private static final String[] G_SAVE = {"........#", ".......##", "......##.", "#....##..", "##..##...",
+		".####....", "..##.....", ".........", "........."};
+	private static final String[] G_CLOSE = {"#.......#", ".#.....#.", "..#...#..", "...#.#...", "....#....",
+		"...#.#...", "..#...#..", ".#.....#.", "#.......#"};
+	private static final String[] G_EDIT = {"......##.", ".....#..#", "....#..#.", "...#..#..", "..#..#...",
+		".#..#....", "#..#.....", "##.......", "###......"};
+	private static final int ICON_BTN = 15;
+
+	/** Ein Symbol in einem kleinen Knopf; hell beim Ueberfahren. @return ob die Maus darauf ist */
+	private boolean iconButton(DrawContext ctx, String[] g, int x, int y, int mx, int my, int colour, int hoverColour) {
+		boolean h = Draw.inside(mx, my, x, y, ICON_BTN, ICON_BTN);
+		if (h) {
+			Surface.row(ctx, x, y, ICON_BTN, ICON_BTN, Theme.FIELD_HOVER);
+		}
+		int ox = x + (ICON_BTN - 9) / 2;
+		int oy = y + (ICON_BTN - 9) / 2;
+		int c = h ? hoverColour : colour;
+		for (int r = 0; r < g.length; r++) {
+			for (int k = 0; k < g[r].length(); k++) {
+				if (g[r].charAt(k) == '#') {
+					ctx.fill(ox + k, oy + r, ox + k + 1, oy + r + 1, c);
+				}
+			}
+		}
+		return h;
+	}
+
+	/** Kurzer Hinweis neben der Maus, nach allem anderen gezeichnet. */
+	private String sideTip;
+	private int sideTipX, sideTipY;
+
+	/** Die Knoepfe rechts in der Zeile des geoeffneten Packs: x-Positionen fuer +, Speichern, Schliessen. */
+	private int[] packButtons(int x, int w) {
+		int right = x + w;
+		return new int[] {right - 3 * ICON_BTN - 4, right - 2 * ICON_BTN - 2, right - ICON_BTN};
+	}
+
+	/** Ein eigenes Pack: Name, rechts .zip oder Ordner. Geoeffnet: rechts Hinzufuegen, Speichern, Schliessen. */
 	private void drawPackRow(DrawContext ctx, int row, PackScanner.Pack pk, int x, int y, int w, boolean hover) {
 		boolean open = editing != null && editing.path().equals(pk.path());
 		if (open) {
@@ -1309,10 +1359,27 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		} else if (hover) {
 			Surface.row(ctx, x - 4, y, w + 8, Metrics.ROW_H, Theme.ROW_HOVER);
 		}
-		String kind = rowCount[row] == null ? "" : rowCount[row];
-		int kw = Ui.widthSmall(this.textRenderer, kind);
-		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(kind), x + w - kw, y, Metrics.ROW_H,
-			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+		int kw;
+		if (open) {
+			int[] bx = packButtons(x, w);
+			int by = y + (Metrics.ROW_H - ICON_BTN) / 2;
+			String[][] gs = {G_PLUS, G_SAVE, G_CLOSE};
+			String[] tips = {"resourcepackstudio.mine.add", "resourcepackstudio.mine.save", "resourcepackstudio.mine.stop"};
+			int[] cols = {Theme.ACCENT, Theme.ACCENT, Theme.TEXT_MUTED};
+			for (int i = 0; i < 3; i++) {
+				if (iconButton(ctx, gs[i], bx[i], by, lastMouseX, lastMouseY, cols[i], Theme.TEXT)) {
+					sideTip = Text.translatable(tips[i]).getString();
+					sideTipX = lastMouseX;
+					sideTipY = lastMouseY;
+				}
+			}
+			kw = x + w - bx[0];
+		} else {
+			String kind = rowCount[row] == null ? "" : rowCount[row];
+			kw = Ui.widthSmall(this.textRenderer, kind);
+			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(kind), x + w - kw, y, Metrics.ROW_H,
+				Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+		}
 		// Kleiner Pfeil wie bei den Kategorien: offen = wird bearbeitet.
 		int top = y + (Metrics.ROW_H - 7) / 2;
 		for (int i = 0; i < 4; i++) {
@@ -2153,8 +2220,23 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				if (isPackRow(rowItem[i])) {
 					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
 						PackScanner.Pack pk = mine.get(PACK_ROW - rowItem[i]);
-						if (editing != null && editing.path().equals(pk.path())) {
-							// Noch einmal: zuklappen, Bearbeiten beenden.
+						boolean open = editing != null && editing.path().equals(pk.path());
+						if (open) {
+							int[] bx = packButtons(x, w);
+							if (Draw.inside(mx, my, bx[0], ry, ICON_BTN, Metrics.ROW_H)) {
+								// Hinzufuegen = etwas aus den Listen waehlen. Items
+								// aufklappen und oben sagen, was jetzt passiert.
+								expanded.add(CAT_ITEMS);
+								this.addHint = true;
+								buildRows(false);
+								refreshLabels();
+								return true;
+							}
+							if (Draw.inside(mx, my, bx[1], ry, ICON_BTN, Metrics.ROW_H)) {
+								openNameDialog();
+								return true;
+							}
+							// Schliessen-Knopf oder die Zeile selbst: Bearbeiten beenden.
 							this.editing = null;
 						} else {
 							StudioIndex.openOwn(pk);
@@ -2179,37 +2261,18 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				if (isEntryRow(rowItem[i])) {
 					if (Draw.inside(mx, my, x + 6, ry, w - 2, Metrics.ROW_H)) {
 						int it = ENTRY_ROW - rowItem[i];
-						if (mx >= x + w - REMOVE_W) {
+						int right = x + w;
+						if (mx >= right - ICON_BTN) {
 							// Aus dem Pack nehmen: wieder Vanilla.
 							StudioIndex.select(items.get(it), null);
 							rebuildAfterPick();
+						} else if (mx >= right - 2 * ICON_BTN - 2 && EditorScreen.editable(items.get(it))) {
+							StudioItem cur = items.get(it);
+							this.client.setScreen(new EditorScreen(this, cur, StudioIndex.selected(cur), itemNames[it]));
 						} else if (selected != it) {
 							selected = it;
 							lastItem = items.get(it).id();
 							scroll = 0;
-							refreshLabels();
-						}
-						return true;
-					}
-					continue;
-				}
-				if (isActionRow(rowItem[i])) {
-					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
-						int act = ACTION_ROW - rowItem[i];
-						if (act == ACT_ADD) {
-							// Hinzufuegen = etwas aus den Listen waehlen. Items aufklappen
-							// und oben sagen, was jetzt passiert.
-							expanded.add(CAT_ITEMS);
-							this.addHint = true;
-							buildRows(false);
-							refreshLabels();
-							this.search.setFocused(true);
-						} else if (act == ACT_SAVE) {
-							openNameDialog();
-						} else {
-							this.editing = null;
-							this.addHint = false;
-							buildRows(false);
 							refreshLabels();
 						}
 						return true;
