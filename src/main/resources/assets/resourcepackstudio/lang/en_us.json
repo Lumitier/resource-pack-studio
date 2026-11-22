@@ -141,5 +141,12 @@
   "resourcepackstudio.editor.hide.particle": "Every frame transparent - turns this particle off",
   "resourcepackstudio.editor.hidden": "Everything is transparent now. Save to use it.",
   "resourcepackstudio.studio.cat.mine": "My Packs",
-  "resourcepackstudio.mine.empty": "Packs you build appear here."
+  "resourcepackstudio.mine.empty": "Packs you build appear here.",
+  "resourcepackstudio.mine.add": "Add texture",
+  "resourcepackstudio.mine.save": "Save changes",
+  "resourcepackstudio.mine.stop": "Stop editing",
+  "resourcepackstudio.mine.add_hint": "Pick anything below - it goes into %s",
+  "resourcepackstudio.import.title": "Choose a PNG",
+  "resourcepackstudio.import.card": "Import PNG",
+  "resourcepackstudio.import.waiting": "Choosing..."
 }

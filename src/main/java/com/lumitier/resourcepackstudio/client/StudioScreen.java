@@ -392,13 +392,34 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	/** Zeile fuer ein eigenes Pack: PACK_ROW - Index in {@link #mine}. */
 	private static final int PACK_ROW = -1000;
 
+	/** Unter dem geoeffneten eigenen Pack: was darin steckt (ENTRY_ROW - Item-Index). */
+	private static final int ENTRY_ROW = -200000;
+	/** Unter dem geoeffneten eigenen Pack: Hinzufuegen, Speichern, Schliessen. */
+	private static final int ACTION_ROW = -500;
+	private static final int ACT_ADD = 0;
+	private static final int ACT_SAVE = 1;
+	private static final int ACT_STOP = 2;
+	/** Breite des "x" rechts in einer Eintragszeile. */
+	private static final int REMOVE_W = 14;
+
 	private static boolean isPackRow(int row) {
-		return row <= PACK_ROW;
+		return row <= PACK_ROW && row > ENTRY_ROW;
+	}
+
+	private static boolean isEntryRow(int row) {
+		return row <= ENTRY_ROW;
+	}
+
+	private static boolean isActionRow(int row) {
+		return row <= ACTION_ROW && row > ACTION_ROW - 10;
 	}
 
 	private static boolean isCatRow(int row) {
-		return row <= CAT_ROW && row > PACK_ROW;
+		return row <= CAT_ROW && row > CAT_ROW - 100;
 	}
+
+	/** Nach "Hinzufuegen": Hinweis oben in der Seitenleiste, bis etwas gewaehlt wird. */
+	private boolean addHint;
 
 	/** Eigene Packs in der Reihenfolge der Seitenleiste. */
 	private List<PackScanner.Pack> mine = List.of();
@@ -513,9 +534,27 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 					idx.add(-1);
 				}
 				for (int k : mineHits) {
-					labels.add(mine.get(k).name());
-					counts.add(mine.get(k).zip() ? ".zip" : Text.translatable("resourcepackstudio.format.folder").getString());
+					PackScanner.Pack pk = mine.get(k);
+					labels.add(pk.name());
+					counts.add(pk.zip() ? ".zip" : Text.translatable("resourcepackstudio.format.folder").getString());
 					idx.add(PACK_ROW - k);
+					if (editing == null || !editing.path().equals(pk.path())) {
+						continue;
+					}
+					// Geoeffnet: darunter alles, was drinsteckt, und was man tun kann.
+					for (int i = 0; i < items.size(); i++) {
+						if (StudioIndex.selected(items.get(i)) != null) {
+							labels.add(null);
+							counts.add(null);
+							idx.add(ENTRY_ROW - i);
+						}
+					}
+					String[] acts = {"resourcepackstudio.mine.add", "resourcepackstudio.mine.save", "resourcepackstudio.mine.stop"};
+					for (int a = 0; a < acts.length; a++) {
+						labels.add(Text.translatable(acts[a]).getString());
+						counts.add(null);
+						idx.add(ACTION_ROW - a);
+					}
 				}
 			}
 		}
@@ -613,11 +652,22 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		refreshLabels();
 	}
 
+	/** Nach Waehlen oder Entfernen: Zaehler, und beim Bearbeiten die Liste unter dem Pack. */
+	private void rebuildAfterPick() {
+		this.addHint = false;
+		if (editing != null) {
+			buildRows(false);
+		}
+		refreshLabels();
+	}
+
 	/** Texte, die von Auswahl und Ergebnis abhaengen. */
 	private void refreshLabels() {
 		PackScanner.Result r = StudioIndex.result();
 		int packs = r == null ? 0 : r.packs().size();
-		this.sideSub = editing != null
+		this.sideSub = editing != null && addHint
+			? Text.translatable("resourcepackstudio.mine.add_hint", editing.name()).getString()
+			: editing != null
 			? Text.translatable("resourcepackstudio.open.editing", editing.name()).getString()
 			: Text.translatable("resourcepackstudio.studio.summary",
 				packs, StudioIndex.selectionCount()).getString();
@@ -1184,6 +1234,22 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 					inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H));
 				continue;
 			}
+			if (isEntryRow(item)) {
+				drawEntryRow(ctx, ENTRY_ROW - item, x, ry, w, inList, mouseX, mouseY);
+				continue;
+			}
+			if (isActionRow(item)) {
+				boolean h = inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H);
+				if (h) {
+					Surface.row(ctx, x + 6, ry, w - 2, Metrics.ROW_H, Theme.ROW_HOVER);
+				}
+				int act = ACTION_ROW - item;
+				String sym = act == ACT_ADD ? "+  " : act == ACT_SAVE ? "\u2713  " : "\u00d7  ";
+				Ui.drawCenteredIn(ctx, this.textRenderer,
+					Ui.text(Ui.fit(this.textRenderer, sym + rowLabel[i], w - 24)), x + 14, ry, Metrics.ROW_H,
+					Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, act == ACT_STOP ? Theme.TEXT_FAINT : (h ? Theme.TEXT : Theme.ACCENT));
+				continue;
+			}
 			if (item <= CAT_ROW) {
 				drawCategoryRow(ctx, i, CAT_ROW - item, x, ry, w,
 					inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H));
@@ -1206,6 +1272,35 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			dragBar == BAR_SIDE || hoverBar(mouseX, mouseY, sideBarX(), sideTop, sideBottom - sideTop));
 	}
 
+	/** Was im geoeffneten Pack steckt: eingerueckt, mit Vorschau; beim Ueberfahren ein x zum Entfernen. */
+	private void drawEntryRow(DrawContext ctx, int item, int x, int y, int w, boolean inList, int mx, int my) {
+		int ix = x + 10;
+		int iw = w - 10;
+		boolean hover = inList && Draw.inside(mx, my, ix - 4, y, iw + 8, Metrics.ROW_H);
+		if (item == selected) {
+			Surface.row(ctx, ix - 4, y, iw + 8, Metrics.ROW_H, Theme.ROW_SELECTED);
+		} else if (hover) {
+			Surface.row(ctx, ix - 4, y, iw + 8, Metrics.ROW_H, Theme.ROW_HOVER);
+		}
+		int mid = y + Metrics.ROW_H / 2;
+		StudioItem it = items.get(item);
+		int tx = ix + 4;
+		if (!it.sound()) {
+			drawPreview(ctx, it, StudioIndex.selected(it), ix, mid - ITEM_ICON / 2, ITEM_ICON);
+			tx = ix + ITEM_ICON + Metrics.ROW_ICON_GAP;
+		}
+		int right = ix + iw;
+		if (hover) {
+			boolean onX = Draw.inside(mx, my, right - REMOVE_W, y, REMOVE_W + 4, Metrics.ROW_H);
+			Ui.drawCenteredLine(ctx, this.textRenderer, Ui.text("\u00d7"), right - REMOVE_W + 4, mid,
+				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, onX ? Theme.WARN : Theme.TEXT_MUTED);
+			right -= REMOVE_W;
+		}
+		String label = Ui.fit(this.textRenderer, itemNames[item], right - tx - 2);
+		Ui.drawCenteredLine(ctx, this.textRenderer, Ui.text(label), tx, mid,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, item == selected ? Theme.TEXT : Theme.TEXT_MUTED);
+	}
+
 	/** Ein eigenes Pack: Name, rechts .zip oder Ordner. Hervorgehoben, wenn es gerade bearbeitet wird. */
 	private void drawPackRow(DrawContext ctx, int row, PackScanner.Pack pk, int x, int y, int w, boolean hover) {
 		boolean open = editing != null && editing.path().equals(pk.path());
@@ -1218,6 +1313,15 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int kw = Ui.widthSmall(this.textRenderer, kind);
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(kind), x + w - kw, y, Metrics.ROW_H,
 			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+		// Kleiner Pfeil wie bei den Kategorien: offen = wird bearbeitet.
+		int top = y + (Metrics.ROW_H - 7) / 2;
+		for (int i = 0; i < 4; i++) {
+			if (open) {
+				ctx.fill(x + 1 + i, top + 1 + i, x + 8 - i, top + 2 + i, Theme.TEXT_FAINT);
+			} else {
+				ctx.fill(x + 2 + i, top + i, x + 3 + i, top + 7 - i, Theme.TEXT_FAINT);
+			}
+		}
 		Ui.drawCenteredIn(ctx, this.textRenderer,
 			Ui.text(Ui.fit(this.textRenderer, rowLabel[row], w - 14 - kw - 6)), x + 14, y, Metrics.ROW_H,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, open ? Theme.TEXT : Theme.TEXT_MUTED);
@@ -1336,7 +1440,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 		List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
 		boolean canDraw = EditorScreen.editable(items.get(selected));
-		int cards = vs.size() + 1 + (canDraw ? 1 : 0);
+		boolean canImport = canDraw && items.get(selected).parts().size() == 1;
+		int cards = vs.size() + 1 + (canDraw ? 1 : 0) + (canImport ? 1 : 0);
 		int rows = (cards + cols - 1) / cols;
 		int extra = vs.isEmpty() ? Ui.advance(Ui.BODY_H, Ui.BODY_D, 0) + 12 : 0;
 		this.contentHeight = rows * (CARD_H + CARD_GAP) + extra;
@@ -1365,7 +1470,11 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				continue;
 			}
 			boolean hover = inList && Draw.inside(mouseX, mouseY, bx, by, colW, CARD_H);
-			if (canDraw && i == cards - 1) {
+			if (canImport && i == cards - 1) {
+				drawImportCard(ctx, bx, by, hover);
+				continue;
+			}
+			if (canDraw && i == cards - 1 - (canImport ? 1 : 0)) {
 				drawAddCard(ctx, bx, by, hover);
 				continue;
 			}
@@ -1565,6 +1674,61 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	}
 
 	/** Letzte Karte: "Selbst zeichnen" - ein Plus und die Beschriftung. */
+	private volatile boolean importing;
+
+	/** PNG von der Festplatte waehlen - Dateifenster im eigenen Thread, wie beim Pack-Icon. */
+	private void importImage(StudioItem cur) {
+		if (importing) {
+			return;
+		}
+		importing = true;
+		Thread t = new Thread(() -> {
+			String picked = null;
+			try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+				org.lwjgl.PointerBuffer filters = stack.mallocPointer(1);
+				filters.put(stack.UTF8("*.png"));
+				filters.flip();
+				picked = org.lwjgl.util.tinyfd.TinyFileDialogs.tinyfd_openFileDialog(
+					Text.translatable("resourcepackstudio.import.title").getString(), null, filters, "PNG image", false);
+			} catch (Throwable e) {
+				ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not open the file dialog.", e);
+			}
+			String p = picked;
+			net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
+				importing = false;
+				if (p != null) {
+					EditorScreen.importPng(cur, java.nio.file.Path.of(p));
+				}
+			});
+		}, "Resource Pack Studio - Import");
+		t.setDaemon(true);
+		t.start();
+	}
+
+	/** "Bild importieren": Pfeil nach oben aus einer Schale. */
+	private void drawImportCard(DrawContext ctx, int x, int y, boolean hover) {
+		int fill = hover ? Theme.CARD_HOVER : Theme.CARD;
+		if (!Surface.glassCard(ctx, x, y, colW, CARD_H, fill)) {
+			Surface.card(ctx, x, y, colW, CARD_H, fill);
+		}
+		Draw.roundedOutline(ctx, x, y, colW, CARD_H, 6, hover ? Theme.TOGGLE_ON : Theme.DIVIDER);
+		int cxm = x + colW / 2;
+		int cym = y + CARD_PAD + PREVIEW / 2;
+		int arm = PREVIEW / 4;
+		int c = hover ? Theme.TEXT : Theme.TEXT_FAINT;
+		ctx.fill(cxm - 1, cym - arm, cxm + 1, cym + arm / 2, c);
+		for (int i = 0; i < arm / 2 + 1; i++) {
+			ctx.fill(cxm - i - 1, cym - arm + i, cxm + i + 1, cym - arm + i + 2, c);
+		}
+		ctx.fill(cxm - arm, cym + arm - 2, cxm + arm + 1, cym + arm, c);
+		ctx.fill(cxm - arm, cym + arm / 2, cxm - arm + 2, cym + arm, c);
+		ctx.fill(cxm + arm - 1, cym + arm / 2, cxm + arm + 1, cym + arm, c);
+		String name = Text.translatable(importing ? "resourcepackstudio.import.waiting" : "resourcepackstudio.import.card").getString();
+		int nw = Ui.widthSmall(this.textRenderer, name);
+		Ui.drawTop(ctx, this.textRenderer, Ui.small(name), x + (colW - nw) / 2, y + CARD_PAD + PREVIEW + 6,
+			Ui.TOP_SMALL, hover ? Theme.TEXT : Theme.TEXT_MUTED);
+	}
+
 	private void drawAddCard(DrawContext ctx, int x, int y, boolean hover) {
 		int fill = hover ? Theme.CARD_HOVER : Theme.CARD;
 		if (!Surface.glassCard(ctx, x, y, colW, CARD_H, fill)) {
@@ -1989,9 +2153,65 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				if (isPackRow(rowItem[i])) {
 					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
 						PackScanner.Pack pk = mine.get(PACK_ROW - rowItem[i]);
-						StudioIndex.openOwn(pk);
-						this.editing = pk;
+						if (editing != null && editing.path().equals(pk.path())) {
+							// Noch einmal: zuklappen, Bearbeiten beenden.
+							this.editing = null;
+						} else {
+							StudioIndex.openOwn(pk);
+							this.editing = pk;
+							// Gleich den ersten Eintrag zeigen - man sieht sofort, dass etwas passiert ist.
+							for (int k = 0; k < items.size(); k++) {
+								if (StudioIndex.selected(items.get(k)) != null) {
+									selected = k;
+									lastItem = items.get(k).id();
+									scroll = 0;
+									break;
+								}
+							}
+						}
+						this.addHint = false;
+						buildRows(false);
 						refreshLabels();
+						return true;
+					}
+					continue;
+				}
+				if (isEntryRow(rowItem[i])) {
+					if (Draw.inside(mx, my, x + 6, ry, w - 2, Metrics.ROW_H)) {
+						int it = ENTRY_ROW - rowItem[i];
+						if (mx >= x + w - REMOVE_W) {
+							// Aus dem Pack nehmen: wieder Vanilla.
+							StudioIndex.select(items.get(it), null);
+							rebuildAfterPick();
+						} else if (selected != it) {
+							selected = it;
+							lastItem = items.get(it).id();
+							scroll = 0;
+							refreshLabels();
+						}
+						return true;
+					}
+					continue;
+				}
+				if (isActionRow(rowItem[i])) {
+					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
+						int act = ACTION_ROW - rowItem[i];
+						if (act == ACT_ADD) {
+							// Hinzufuegen = etwas aus den Listen waehlen. Items aufklappen
+							// und oben sagen, was jetzt passiert.
+							expanded.add(CAT_ITEMS);
+							this.addHint = true;
+							buildRows(false);
+							refreshLabels();
+							this.search.setFocused(true);
+						} else if (act == ACT_SAVE) {
+							openNameDialog();
+						} else {
+							this.editing = null;
+							this.addHint = false;
+							buildRows(false);
+							refreshLabels();
+						}
 						return true;
 					}
 					continue;
@@ -2058,13 +2278,18 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		if (StudioIndex.result() != null && Draw.inside(mx, my, cx, gt, cw, listBottom - gt)) {
 			List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
 			boolean canDraw = EditorScreen.editable(items.get(selected));
-			int cards = vs.size() + 1 + (canDraw ? 1 : 0);
+			boolean canImport = canDraw && items.get(selected).parts().size() == 1;
+			int cards = vs.size() + 1 + (canDraw ? 1 : 0) + (canImport ? 1 : 0);
 			for (int i = 0; i < cards; i++) {
 				int bx = cx + (i % cols) * (colW + CARD_GAP);
 				int by = gt + (i / cols) * (CARD_H + CARD_GAP) - scroll;
 				if (Draw.inside(mx, my, bx, by, colW, CARD_H)) {
 					StudioItem cur = items.get(selected);
-					if (canDraw && i == cards - 1) {
+					if (canImport && i == cards - 1) {
+						importImage(cur);
+						return true;
+					}
+					if (canDraw && i == cards - 1 - (canImport ? 1 : 0)) {
 						// Zeichnen: mit dem, was gerade gewaehlt ist, als Vorlage.
 						this.client.setScreen(new EditorScreen(this, cur, StudioIndex.selected(cur), itemNames[selected]));
 						return true;
@@ -2079,7 +2304,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 						}
 					}
 					StudioIndex.select(cur, v);
-					refreshLabels();
+					rebuildAfterPick();
 					return true;
 				}
 			}

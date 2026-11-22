@@ -336,16 +336,48 @@ public final class EditorScreen extends Screen {
 		return ResourcePackStudio.packsDir().resolve(DRAWINGS);
 	}
 
+	/** Das Pack "My Drawings" anlegen, falls es noch keins gibt. */
+	public static Path ensureDrawingsPack() throws java.io.IOException {
+		Path pack = drawingsPack();
+		Files.createDirectories(pack);
+		Path meta = pack.resolve("pack.mcmeta");
+		if (!Files.isRegularFile(meta)) {
+			Files.writeString(meta, "{\n  \"pack\": {\n    \"description\": \"Drawings made in Resource Pack Studio\",\n"
+				+ "    \"min_format\": " + PackBuilder.PACK_FORMAT + ",\n    \"max_format\": " + PackBuilder.PACK_FORMAT
+				+ "\n  }\n}\n", StandardCharsets.UTF_8);
+		}
+		return pack;
+	}
+
+	/**
+	 * Eine PNG von der Festplatte als Bild fuer diesen Eintrag uebernehmen -
+	 * landet wie eine Zeichnung in "My Drawings". @return Fehler-Schluessel
+	 * oder null.
+	 */
+	public static String importPng(StudioItem item, Path file) {
+		try {
+			byte[] data = Files.readAllBytes(file);
+			try (NativeImage img = NativeImage.read(data)) {
+				if (img.getWidth() < 1 || img.getHeight() < 1) {
+					return "resourcepackstudio.icon.not_png";
+				}
+			}
+			Path pack = ensureDrawingsPack();
+			Path target = drawingFile(item, 0);
+			Files.createDirectories(target.getParent());
+			Files.write(target, data);
+			StudioIndex.selectAfterScan(item.id(), pack);
+			StudioIndex.rescan();
+			return null;
+		} catch (Exception e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not import {}", file, e);
+			return "resourcepackstudio.icon.not_png";
+		}
+	}
+
 	private void save() {
 		try {
-			Path pack = drawingsPack();
-			Files.createDirectories(pack);
-			Path meta = pack.resolve("pack.mcmeta");
-			if (!Files.isRegularFile(meta)) {
-				Files.writeString(meta, "{\n  \"pack\": {\n    \"description\": \"Drawings made in Resource Pack Studio\",\n"
-					+ "    \"min_format\": " + PackBuilder.PACK_FORMAT + ",\n    \"max_format\": " + PackBuilder.PACK_FORMAT
-					+ "\n  }\n}\n", StandardCharsets.UTF_8);
-			}
+			Path pack = ensureDrawingsPack();
 			if (strip) {
 				int w = frames.get(0).getWidth();
 				try (NativeImage joined = new NativeImage(w, w * frames.size(), true)) {

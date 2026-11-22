@@ -141,5 +141,12 @@
   "resourcepackstudio.editor.hide.particle": "Alle Bilder durchsichtig - schaltet diesen Partikel aus",
   "resourcepackstudio.editor.hidden": "Alles ist jetzt durchsichtig. Speichern, um es zu benutzen.",
   "resourcepackstudio.studio.cat.mine": "Meine Packs",
-  "resourcepackstudio.mine.empty": "Gebaute Packs erscheinen hier."
+  "resourcepackstudio.mine.empty": "Gebaute Packs erscheinen hier.",
+  "resourcepackstudio.mine.add": "Textur hinzufügen",
+  "resourcepackstudio.mine.save": "Änderungen speichern",
+  "resourcepackstudio.mine.stop": "Bearbeiten beenden",
+  "resourcepackstudio.mine.add_hint": "Wähl unten etwas aus - es kommt in %s",
+  "resourcepackstudio.import.title": "PNG auswählen",
+  "resourcepackstudio.import.card": "PNG importieren",
+  "resourcepackstudio.import.waiting": "Wird gewählt..."
 }
