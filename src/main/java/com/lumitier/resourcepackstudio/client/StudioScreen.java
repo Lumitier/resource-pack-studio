@@ -672,7 +672,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			? Text.translatable("resourcepackstudio.open.editing", editing.name()).getString()
 			: Text.translatable("resourcepackstudio.studio.summary",
 				packs, StudioIndex.selectionCount()).getString();
-		this.createLabel = Text.translatable("resourcepackstudio.create.button").getString();
+		this.createLabel = Text.translatable(editing != null
+			? "resourcepackstudio.mine.save_changes" : "resourcepackstudio.create.button").getString();
 
 		StudioItem cur = items.get(selected);
 		this.headerTitle = cur.sound() ? cur.id().substring(StudioItems.SOUND_ID.length()) : itemNames[selected];
@@ -805,7 +806,23 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	}
 
 	/** Dialog oeffnen: Name eingeben. */
+	/** Beim Bearbeiten wird gespeichert, nicht neu erstellt: gleicher Name, gleiches Format, altes Icon. */
+	private boolean savingExisting;
+
+	private void saveEditing() {
+		if (editing == null) {
+			openNameDialog();
+			return;
+		}
+		this.nameField.reset(editing.name());
+		this.asFolder = !editing.zip();
+		this.icon.clear();
+		this.savingExisting = true;
+		startBuild();
+	}
+
 	private void openNameDialog() {
+		this.savingExisting = false;
 		this.nameField.reset(editing != null ? editing.name() : PackBuilder.defaultName());
 		if (editing != null) {
 			asFolder = !editing.zip();
@@ -934,6 +951,30 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	private void onBuilt(PackBuilder.Built b) {
 		this.built = b;
+		if (savingExisting && b.ok()) {
+			savingExisting = false;
+			if (reenableAt >= 0) {
+				reenable(b.file());
+			}
+			// Gespeichert, nicht erstellt: weiter an diesem Pack arbeiten.
+			if (editing != null && !b.file().equals(editing.path())) {
+				// Konnte nicht ersetzt werden (Datei gesperrt) - neuer Name.
+				this.editing = null;
+				this.packPage = false;
+			}
+			StudioIndex.rescan();
+			refreshLabels();
+			this.dialog = Dialog.DONE;
+			this.dlgTitle = Text.translatable("resourcepackstudio.mine.saved_title").getString();
+			this.dlgLine1 = b.name();
+			this.dlgLine2 = Text.translatable("resourcepackstudio.create.saved",
+				b.textures(), b.file().getFileName().toString()).getString();
+			this.dlgLine3 = "";
+			this.okLabel = "";
+			this.noLabel = Text.translatable("resourcepackstudio.mine.ok").getString();
+			return;
+		}
+		savingExisting = false;
 		if (reenableAt >= 0) {
 			// Wieder einschalten - das neue, falls gebaut, sonst das alte.
 			reenable(b.ok() ? b.file() : (editing != null ? editing.path() : null));
@@ -1368,12 +1409,12 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	/** Kachel mit dem Anfangsbuchstaben - steht fuer ein Pack (links und im Kopf der Pack-Seite). */
 	private void packBadge(DrawContext ctx, String name, int x, int y, int size, boolean strong) {
-		int base = Theme.ACCENT & 0x00FFFFFF;
-		Surface.row(ctx, x, y, size, size, base | (strong ? 0x55000000 : 0x30000000));
+		int base = Theme.TOGGLE_ON & 0x00FFFFFF;
+		Surface.row(ctx, x, y, size, size, base | (strong ? 0x66000000 : 0x38000000));
 		String letter = name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase(Locale.ROOT);
 		int lw = Ui.widthBold(this.textRenderer, letter);
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.bold(letter), x + (size - lw) / 2, y, size,
-			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.ACCENT);
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFFFFFFFF);
 	}
 
 	/** Ein eigenes Pack: Buchstabe, Name, darunter Anzahl und Format. Hervorgehoben, wenn es offen ist. */
@@ -1760,6 +1801,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	/** Auf der Pack-Seite gewaehlte Kachel (Index in packEntries), rechts im Detailbereich. */
 	private int pageSel = 0;
 	private static final int INSPECTOR_W = 176;
+	/** Luft zwischen Kopf (mit Pack-Kachel) und den Kacheln darunter. */
+	private static final int PAGE_GAP = 8;
 	/** Knoepfe im Detailbereich: {x, y, w, h, Aktion}. */
 	private final List<int[]> pageHits = new ArrayList<>();
 	private static final int P_EDIT = 1, P_OTHER = 2, P_IMPORT = 3, P_REMOVE = 4;
@@ -1779,7 +1822,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private void renderPackPage(DrawContext ctx, int mouseX, int mouseY) {
 		// Auf die Mitte der Grossbuchstaben des Titels ausgerichtet (gemessen:
 		// Versalien von cy+13 bis cy+27), nicht auf die Kopfzeile.
-		int bs = 24;
+		int bs = 20;
 		packBadge(ctx, editing.name(), cx, cy + 20 - bs / 2, bs, true);
 		int tx = cx + bs + 10;
 		Ui.drawTop(ctx, this.textRenderer, Ui.title(editing.name()), tx, cy + 10, Ui.TOP_TITLE, Theme.TEXT);
@@ -1802,9 +1845,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		Surface.row(ctx, pageCloseX, pageBtnY, pageCloseW, bh, hc ? Theme.FIELD_HOVER : Theme.FIELD);
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(close), pageCloseX + 10, pageBtnY, bh,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, hc ? Theme.TEXT : Theme.TEXT_MUTED);
-		Surface.row(ctx, pageSaveX, pageBtnY, pageSaveW, bh, hs ? Anim.alpha(Theme.ACCENT, 0.85F) : Theme.ACCENT);
+		Surface.row(ctx, pageSaveX, pageBtnY, pageSaveW, bh, hs ? hoverOf(Theme.TOGGLE_ON) : Theme.TOGGLE_ON);
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.bold(save), pageSaveX + 12, pageBtnY, bh,
-			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFF1A1406);
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFFFFFFFF);
 
 		if (pageSel >= n) {
 			pageSel = n - 1;
@@ -1812,7 +1855,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int pc = pageCols();
 		int tiles = n + 1;
 		int rows = (tiles + pc - 1) / pc;
-		this.contentHeight = rows * (TILE_H + CARD_GAP);
+		this.contentHeight = PAGE_GAP + rows * (TILE_H + CARD_GAP);
 		int maxScroll = Math.max(0, contentHeight - (listBottom - listTop));
 		if (scroll > maxScroll) {
 			scroll = maxScroll;
@@ -1823,7 +1866,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		Sdf.clip(new ScreenRect(cx, listTop, gridR - cx, listBottom - listTop));
 		for (int i = 0; i < tiles; i++) {
 			int x = cx + (i % pc) * (colW + CARD_GAP);
-			int y = listTop + (i / pc) * (TILE_H + CARD_GAP) - scroll;
+			int y = listTop + PAGE_GAP + (i / pc) * (TILE_H + CARD_GAP) - scroll;
 			if (y + TILE_H < listTop || y > listBottom) {
 				continue;
 			}
@@ -1836,12 +1879,14 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			StudioItem it = items.get(item);
 			PackScanner.Variant v = StudioIndex.selected(it);
 			boolean sel = i == pageSel;
+			// Genau wie die Karten der Versionen: Schatten, Glas, blauer Rand wenn gewaehlt.
+			Surface.shadowCard(ctx, x, y, colW, TILE_H, 3, 2, Theme.SHADOW_CARD);
 			int fill = sel ? Theme.ROW_SELECTED : hover ? Theme.CARD_HOVER : Theme.CARD;
 			if (!Surface.glassCard(ctx, x, y, colW, TILE_H, fill)) {
 				Surface.card(ctx, x, y, colW, TILE_H, fill);
 			}
 			if (sel) {
-				Draw.roundedOutline(ctx, x, y, colW, TILE_H, 6, Theme.ACCENT);
+				Draw.roundedOutline(ctx, x, y, colW, TILE_H, 6, Theme.TOGGLE_ON);
 			}
 			drawPreview(ctx, it, v, x + (colW - PREVIEW) / 2, y + CARD_PAD, PREVIEW);
 			String name = Ui.fitSmall(this.textRenderer, itemNames[item], colW - 8);
@@ -1858,7 +1903,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		drawBar(ctx, gridR + 3, listTop, listBottom - listTop, contentHeight, scroll,
 			dragBar == BAR_CONTENT || hoverBar(mouseX, mouseY, gridR + 3, listTop, listBottom - listTop));
 
-		renderInspector(ctx, gridR + 12, listTop, INSPECTOR_W, listBottom - listTop, mouseX, mouseY);
+		renderInspector(ctx, gridR + 12, listTop + PAGE_GAP, INSPECTOR_W, listBottom - listTop - PAGE_GAP, mouseX, mouseY);
 	}
 
 	/** Rechts: die gewaehlte Textur gross, Name, Herkunft, und was man damit tun kann. */
@@ -1911,11 +1956,11 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private void inspectorButton(DrawContext ctx, int x, int y, int w, int h, String key, boolean primary,
 	                             boolean danger, int mx, int my, int action) {
 		boolean hov = Draw.inside(mx, my, x, y, w, h);
-		int fill = primary ? (hov ? Anim.alpha(Theme.ACCENT, 0.85F) : Theme.ACCENT) : hov ? Theme.FIELD_HOVER : Theme.FIELD;
+		int fill = primary ? (hov ? hoverOf(Theme.TOGGLE_ON) : Theme.TOGGLE_ON) : hov ? Theme.FIELD_HOVER : Theme.FIELD;
 		Surface.row(ctx, x, y, w, h, fill);
 		String label = Ui.fit(this.textRenderer, Text.translatable(key).getString(), w - 10);
 		int lw = primary ? Ui.widthBold(this.textRenderer, label) : Ui.width(this.textRenderer, label);
-		int colour = primary ? 0xFF1A1406 : danger ? (hov ? Theme.WARN : Anim.alpha(Theme.WARN, 0.8F)) : hov ? Theme.TEXT : Theme.TEXT_MUTED;
+		int colour = primary ? 0xFFFFFFFF : danger ? (hov ? Theme.WARN : Anim.alpha(Theme.WARN, 0.8F)) : hov ? Theme.TEXT : Theme.TEXT_MUTED;
 		Ui.drawCenteredIn(ctx, this.textRenderer, primary ? Ui.bold(label) : Ui.text(label), x + (w - lw) / 2, y, h,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, colour);
 		pageHits.add(new int[] {x, y, w, h, action});
@@ -1923,7 +1968,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	/** Letzte Kachel: gestrichelter Rahmen, Plus, "Textur hinzufuegen". */
 	private void drawAddTile(DrawContext ctx, int x, int y, boolean hover) {
-		int c = hover ? Theme.ACCENT : Theme.DIVIDER;
+		int c = hover ? Theme.TOGGLE_ON : Theme.DIVIDER;
 		for (int i = 0; i < colW; i += 6) {
 			ctx.fill(x + i, y, x + Math.min(i + 3, colW), y + 1, c);
 			ctx.fill(x + i, y + TILE_H - 1, x + Math.min(i + 3, colW), y + TILE_H, c);
@@ -1935,8 +1980,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int cxm = x + colW / 2;
 		int cym = y + CARD_PAD + PREVIEW / 2;
 		int arm = PREVIEW / 5;
-		ctx.fill(cxm - arm, cym - 1, cxm + arm + 1, cym + 1, Theme.ACCENT);
-		ctx.fill(cxm - 1, cym - arm, cxm + 1, cym + arm + 1, Theme.ACCENT);
+		int pc2 = hover ? Theme.TOGGLE_ON : Theme.TEXT_FAINT;
+		ctx.fill(cxm - arm, cym - 1, cxm + arm + 1, cym + 1, pc2);
+		ctx.fill(cxm - 1, cym - arm, cxm + 1, cym + arm + 1, pc2);
 		String label = Ui.fitSmall(this.textRenderer, Text.translatable("resourcepackstudio.mine.add").getString(), colW - 8);
 		int lw = Ui.widthSmall(this.textRenderer, label);
 		Ui.drawTop(ctx, this.textRenderer, Ui.small(label), x + (colW - lw) / 2, y + CARD_PAD + PREVIEW + 6,
@@ -1946,7 +1992,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private boolean packPageClick(double mx, double my) {
 		int bh = Metrics.SEARCH_H;
 		if (Draw.inside(mx, my, pageSaveX, pageBtnY, pageSaveW, bh)) {
-			openNameDialog();
+			saveEditing();
 			return true;
 		}
 		if (Draw.inside(mx, my, pageCloseX, pageBtnY, pageCloseW, bh)) {
@@ -1992,7 +2038,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int n = packEntries.size();
 		for (int i = 0; i <= n; i++) {
 			int x = cx + (i % pc) * (colW + CARD_GAP);
-			int y = listTop + (i / pc) * (TILE_H + CARD_GAP) - scroll;
+			int y = listTop + PAGE_GAP + (i / pc) * (TILE_H + CARD_GAP) - scroll;
 			if (!Draw.inside(mx, my, x, y, colW, TILE_H)) {
 				continue;
 			}
@@ -2035,7 +2081,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		this.editBarW = cw;
 		this.editBarY = listBottom - EDIT_BAR_H;
 		Surface.row(ctx, editBarX, editBarY, editBarW, EDIT_BAR_H, Theme.PANEL | 0xFF000000);
-		Draw.roundedOutline(ctx, editBarX, editBarY, editBarW, EDIT_BAR_H, 6, Anim.alpha(Theme.ACCENT, 0.6F));
+		Draw.roundedOutline(ctx, editBarX, editBarY, editBarW, EDIT_BAR_H, 6, Theme.DIVIDER);
 		packBadge(ctx, editing.name(), editBarX + 6, editBarY + (EDIT_BAR_H - 16) / 2, 16, true);
 
 		String back = Text.translatable("resourcepackstudio.mine.back", editing.name()).getString();
@@ -2043,9 +2089,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		this.editBackX = editBarX + editBarW - editBackW - 5;
 		int bh = EDIT_BAR_H - 8;
 		boolean hb = Draw.inside(mouseX, mouseY, editBackX, editBarY + 4, editBackW, bh);
-		Surface.row(ctx, editBackX, editBarY + 4, editBackW, bh, hb ? Anim.alpha(Theme.ACCENT, 0.85F) : Theme.ACCENT);
+		Surface.row(ctx, editBackX, editBarY + 4, editBackW, bh, hb ? hoverOf(Theme.TOGGLE_ON) : Theme.TOGGLE_ON);
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.bold(back), editBackX + 10, editBarY + 4, bh,
-			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFF1A1406);
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFFFFFFFF);
 
 		// "Zu fett hinzufuegen" / "Aus fett nehmen" fuer das Item, das gerade offen ist.
 		StudioItem cur = items.get(selected);
@@ -2059,7 +2105,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			boolean ha = Draw.inside(mouseX, mouseY, editAddX, editBarY + 4, editAddW, bh);
 			Surface.row(ctx, editAddX, editBarY + 4, editAddW, bh, ha ? Theme.FIELD_HOVER : Theme.FIELD);
 			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(add), editAddX + 10, editBarY + 4, bh,
-				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, inPack ? (ha ? Theme.WARN : Theme.TEXT_MUTED) : (ha ? Theme.TEXT : Theme.ACCENT));
+				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, inPack ? (ha ? Theme.WARN : Theme.TEXT_MUTED) : (ha ? Theme.TEXT : Theme.TOGGLE_ON));
 		}
 		int msgRight = editAddW > 0 ? editAddX : editBackX;
 
@@ -2535,7 +2581,11 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		if (Draw.inside(mx, my, createX, createY, createW, BTN_H)) {
 			if (StudioIndex.selectionCount() > 0) {
 				this.search.setFocused(false);
-				openNameDialog();
+				if (editing != null) {
+					saveEditing();
+				} else {
+					openNameDialog();
+				}
 			}
 			return true;
 		}

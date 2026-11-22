@@ -160,5 +160,8 @@
   "resourcepackstudio.mine.added": "%s added to %s",
   "resourcepackstudio.mine.editing_hint": "You're editing %s - the version you click goes into the pack",
   "resourcepackstudio.mine.add_to": "Add to %s",
-  "resourcepackstudio.mine.take_out": "Remove from %s"
+  "resourcepackstudio.mine.take_out": "Remove from %s",
+  "resourcepackstudio.mine.save_changes": "Save changes",
+  "resourcepackstudio.mine.saved_title": "Changes saved",
+  "resourcepackstudio.mine.ok": "OK"
 }
