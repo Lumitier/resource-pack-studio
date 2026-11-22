@@ -1777,8 +1777,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	 * Textur gross, mit klar beschrifteten Knoepfen.
 	 */
 	private void renderPackPage(DrawContext ctx, int mouseX, int mouseY) {
-		int bs = 26;
-		packBadge(ctx, editing.name(), cx, cy + (Metrics.TITLE_H - bs) / 2, bs, true);
+		// Auf die Mitte der Grossbuchstaben des Titels ausgerichtet (gemessen:
+		// Versalien von cy+13 bis cy+27), nicht auf die Kopfzeile.
+		int bs = 24;
+		packBadge(ctx, editing.name(), cx, cy + 20 - bs / 2, bs, true);
 		int tx = cx + bs + 10;
 		Ui.drawTop(ctx, this.textRenderer, Ui.title(editing.name()), tx, cy + 10, Ui.TOP_TITLE, Theme.TEXT);
 		int n = packEntries.size();
