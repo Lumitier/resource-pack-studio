@@ -143,11 +143,13 @@
   "resourcepackstudio.studio.cat.mine": "Meine Packs",
   "resourcepackstudio.mine.empty": "Gebaute Packs erscheinen hier.",
   "resourcepackstudio.mine.add": "Textur hinzufügen",
-  "resourcepackstudio.mine.save": "Änderungen speichern",
-  "resourcepackstudio.mine.stop": "Bearbeiten beenden",
+  "resourcepackstudio.mine.save": "Speichern",
   "resourcepackstudio.mine.add_hint": "Wähl unten etwas aus - es kommt in %s",
   "resourcepackstudio.import.title": "PNG auswählen",
   "resourcepackstudio.import.card": "PNG importieren",
   "resourcepackstudio.import.waiting": "Wird gewählt...",
-  "resourcepackstudio.mine.remove": "Aus dem Pack nehmen"
+  "resourcepackstudio.mine.remove": "Aus dem Pack nehmen",
+  "resourcepackstudio.mine.close": "Schließen",
+  "resourcepackstudio.mine.count.one": "%s Textur",
+  "resourcepackstudio.mine.count.many": "%s Texturen"
 }

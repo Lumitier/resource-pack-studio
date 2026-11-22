@@ -143,11 +143,13 @@
   "resourcepackstudio.studio.cat.mine": "My Packs",
   "resourcepackstudio.mine.empty": "Packs you build appear here.",
   "resourcepackstudio.mine.add": "Add texture",
-  "resourcepackstudio.mine.save": "Save changes",
-  "resourcepackstudio.mine.stop": "Stop editing",
+  "resourcepackstudio.mine.save": "Save",
   "resourcepackstudio.mine.add_hint": "Pick anything below - it goes into %s",
   "resourcepackstudio.import.title": "Choose a PNG",
   "resourcepackstudio.import.card": "Import PNG",
   "resourcepackstudio.import.waiting": "Choosing...",
-  "resourcepackstudio.mine.remove": "Take out of the pack"
+  "resourcepackstudio.mine.remove": "Take out of the pack",
+  "resourcepackstudio.mine.close": "Close",
+  "resourcepackstudio.mine.count.one": "%s texture",
+  "resourcepackstudio.mine.count.many": "%s textures"
 }

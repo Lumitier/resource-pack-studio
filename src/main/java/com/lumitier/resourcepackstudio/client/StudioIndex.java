@@ -169,6 +169,36 @@ public final class StudioIndex {
 		}
 	}
 
+	private static final Map<Path, long[]> OWN_COUNTS = new java.util.concurrent.ConcurrentHashMap<>();
+
+	/**
+	 * Wie viele Texturen ein eigenes Pack enthaelt - aus seiner Auswahl-Datei,
+	 * bei alten Packs aus credits.txt. Gemerkt je Datei und Aenderungszeit,
+	 * damit die Seitenleiste nicht bei jedem Bild Zips oeffnet. -1 = unbekannt.
+	 */
+	public static int ownCount(PackScanner.Pack own) {
+		long mod;
+		try {
+			mod = Files.getLastModifiedTime(own.path()).toMillis();
+		} catch (Exception e) {
+			return -1;
+		}
+		long[] c = OWN_COUNTS.get(own.path());
+		if (c != null && c[0] == mod) {
+			return (int) c[1];
+		}
+		int n;
+		JsonObject sel = readOwnSelection(own);
+		if (sel != null) {
+			n = sel.size();
+		} else {
+			List<String[]> credits = readOwnCredits(own);
+			n = credits.isEmpty() ? -1 : credits.size();
+		}
+		OWN_COUNTS.put(own.path(), new long[] {mod, n});
+		return n;
+	}
+
 	/** Packs, die das Studio gebaut hat - fuer "Pack bearbeiten". Nach Namen sortiert. */
 	public static List<PackScanner.Pack> ownPacks() {
 		PackScanner.Result r = result;
