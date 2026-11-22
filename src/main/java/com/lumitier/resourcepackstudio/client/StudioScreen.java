@@ -652,18 +652,6 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		return out;
 	}
 
-	/** Hat "My Drawings" schon ein Bild fuer diesen Eintrag? Dann das waehlen. */
-	private static boolean selectExistingDrawing(StudioItem item) {
-		java.nio.file.Path drawings = EditorScreen.drawingsPack();
-		for (PackScanner.Variant v : StudioIndex.variants(item)) {
-			if (v.pack().path().equals(drawings)) {
-				StudioIndex.select(item, v);
-				return true;
-			}
-		}
-		return false;
-	}
-
 	/** Nach Waehlen oder Entfernen: Zaehler, und beim Bearbeiten die Liste unter dem Pack. */
 	private void rebuildAfterPick() {
 		if (editing != null && !packPage && StudioIndex.selected(items.get(selected)) != null) {
@@ -1501,7 +1489,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				continue;
 			}
 			PackScanner.Variant v = i == 0 ? null : vs.get(i - 1);
-			boolean isChosen = v == chosen;
+			boolean isChosen = v == null ? chosen == null || StudioIndex.isVanilla(chosen) : v.equals(chosen);
 			drawCard(ctx, bx, by, item, v, i < cardNames.length ? cardNames[i] : "", isChosen, hover);
 		}
 		if (vs.isEmpty() && !canDraw) {
@@ -1996,7 +1984,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		StudioItem cur = items.get(selected);
 		boolean inPack = StudioIndex.selected(cur) != null;
 		this.editAddW = 0;
-		if (inPack || EditorScreen.editable(cur)) {
+		if (inPack || StudioIndex.canIncludeVanilla(cur)) {
 			String add = Text.translatable(inPack ? "resourcepackstudio.mine.take_out" : "resourcepackstudio.mine.add_to",
 				editing.name()).getString();
 			this.editAddW = Ui.width(this.textRenderer, add) + 20;
@@ -2124,8 +2112,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	 *          einen Teil nicht (oder ist er fremd, siehe Part.own), wird
 	 *          dort das Vanilla-Bild gezeigt - genau so saehe es im Spiel aus.
 	 */
-	private static void drawPreview(DrawContext ctx, StudioItem item, PackScanner.Variant v,
+	private static void drawPreview(DrawContext ctx, StudioItem item, PackScanner.Variant chosen,
 	                                int x, int y, int size) {
+		// Bewusst gewaehltes Vanilla sieht aus wie Vanilla.
+		PackScanner.Variant v = StudioIndex.isVanilla(chosen) ? null : chosen;
 		if (item.sound()) {
 			drawPlay(ctx, x, y, size);
 			return;
@@ -2573,15 +2563,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 					StudioIndex.select(cur, null);
 					this.addedLabel = null;
 					rebuildAfterPick();
-				} else if (selectExistingDrawing(cur)) {
-					// Es gibt schon eine Zeichnung dafuer - die nehmen, nicht ueberschreiben.
-					this.addedLabel = itemNames[selected];
-					this.addedAt = System.currentTimeMillis();
+				} else {
+					// Die Textur, die gerade zu sehen ist: Vanilla.
+					StudioIndex.select(cur, StudioIndex.vanillaVariant(cur));
 					rebuildAfterPick();
-				} else if (EditorScreen.copyToDrawings(cur, null)) {
-					// Die Kopie wird nach der Suche gewaehlt und steht dann im Pack.
-					this.addedLabel = itemNames[selected];
-					this.addedAt = System.currentTimeMillis();
 				}
 				return true;
 			}
@@ -2638,6 +2623,11 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 						} else {
 							SoundPreview.playVariant(v);
 						}
+					}
+					// Beim Bearbeiten eines eigenen Packs heisst Vanilla: die
+					// Vanilla-Textur kommt ins Pack. Sonst: nichts gewaehlt.
+					if (v == null && editing != null && StudioIndex.canIncludeVanilla(cur)) {
+						v = StudioIndex.vanillaVariant(cur);
 					}
 					StudioIndex.select(cur, v);
 					rebuildAfterPick();

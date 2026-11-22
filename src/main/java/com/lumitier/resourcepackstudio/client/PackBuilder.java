@@ -208,7 +208,8 @@ public final class PackBuilder {
 			// Eigenes 3D-Modell im Pack (3D-Streitkolben ...): Item-Eintrag,
 			// Modelle und alle Bilder des Modells mitnehmen. Sonst laege die
 			// Textur des Modells auf dem flachen Vanilla-Item.
-			if (!item.cube() && !item.sound() && !item.texture() && !item.particle()) {
+			if (!item.cube() && !item.sound() && !item.texture() && !item.particle()
+					&& !StudioIndex.isVanilla(e.getValue())) {
 				PackModels.Model model = PackModels.load(item, e.getValue());
 				if (model != null) {
 					for (Map.Entry<String, String> f : model.files().entrySet()) {
@@ -522,8 +523,32 @@ public final class PackBuilder {
 		zip.closeEntry();
 	}
 
+	/** Eine Datei aus Minecraft selbst ("assets/minecraft/..."), fuer bewusst gewaehltes Vanilla. */
+	private static byte[] readVanilla(String entry) {
+		String prefix = "assets/minecraft/";
+		if (entry == null || !entry.startsWith(prefix)) {
+			return null;
+		}
+		try {
+			var in = net.minecraft.client.MinecraftClient.getInstance().getDefaultResourcePack()
+				.open(net.minecraft.resource.ResourceType.CLIENT_RESOURCES,
+					net.minecraft.util.Identifier.ofVanilla(entry.substring(prefix.length())));
+			if (in == null) {
+				return null;
+			}
+			try (InputStream s = in.get()) {
+				return s.readAllBytes();
+			}
+		} catch (Exception e) {
+			return null;
+		}
+	}
+
 	/** Liest eine Datei aus dem Pack. null, wenn es sie nicht gibt. */
 	private static byte[] read(PackScanner.Variant v, String entry) {
+		if (StudioIndex.isVanilla(v)) {
+			return readVanilla(entry);
+		}
 		try {
 			if (v.pack().zip()) {
 				try (ZipFile z = new ZipFile(v.pack().path().toFile())) {

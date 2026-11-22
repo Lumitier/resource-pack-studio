@@ -77,6 +77,52 @@ public final class StudioIndex {
 		return v == null ? List.of() : v;
 	}
 
+	/**
+	 * "Vanilla" als bewusste Wahl beim Bearbeiten eines eigenen Packs: Die
+	 * Textur aus Minecraft selbst kommt ins Pack (etwa um sie darin spaeter
+	 * zu bearbeiten). Ein Platzhalter-Pack, dessen Dateien PackBuilder aus
+	 * Minecrafts eigenen Ressourcen liest. Ohne diese Wahl heisst Vanilla
+	 * wie bisher "nicht im Pack".
+	 */
+	public static final String VANILLA_MARK = "vanilla";
+	public static final PackScanner.Pack VANILLA_PACK =
+		new PackScanner.Pack("Vanilla", Path.of(VANILLA_MARK), false, "", "", false);
+
+	public static boolean isVanilla(PackScanner.Variant v) {
+		return v != null && v.pack().path().equals(VANILLA_PACK.path()) && !v.pack().zip()
+			&& "Vanilla".equals(v.pack().name()) && v.pack().source().isEmpty();
+	}
+
+	/** Darf Vanilla bewusst ins Pack? Nicht bei Himmel, Sounds und getragener Ruestung. */
+	public static boolean canIncludeVanilla(StudioItem item) {
+		return !item.sky() && !item.sound() && WornComposer.pieceOf(item) == null;
+	}
+
+	public static PackScanner.Variant vanillaVariant(StudioItem item) {
+		List<String> entries = new java.util.ArrayList<>();
+		for (StudioItem.Part p : item.parts()) {
+			// Geliehene Bilder (Treppe -> Bretter) bleiben, wie sie sind.
+			entries.add(p.own() ? StudioItem.Part.file(p.modern()) : null);
+		}
+		return new PackScanner.Variant(VANILLA_PACK, entries, false);
+	}
+
+	/**
+	 * Bewusst gewaehltes Vanilla wiederherstellen. Eigener Durchgang ueber
+	 * ALLE Eintraege: Items, die kein Pack aendert, stehen gar nicht in der
+	 * Variantenliste der Suche.
+	 */
+	private static void restoreVanilla(JsonObject root) {
+		for (StudioItem it : items()) {
+			JsonElement el = root.get(it.id());
+			if (el != null && el.isJsonObject() && el.getAsJsonObject().has("pack")
+					&& VANILLA_MARK.equals(el.getAsJsonObject().get("pack").getAsString())
+					&& canIncludeVanilla(it)) {
+				SELECTION.put(it.id(), vanillaVariant(it));
+			}
+		}
+	}
+
 	public static PackScanner.Variant selected(StudioItem item) {
 		return SELECTION.get(item.id());
 	}
@@ -164,6 +210,7 @@ public final class StudioIndex {
 					}
 				}
 			}
+			restoreVanilla(root.getAsJsonObject());
 		} catch (Exception e) {
 			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not read the saved selection.", e);
 		}
@@ -276,6 +323,9 @@ public final class StudioIndex {
 			if (pick != null) {
 				SELECTION.put(id, pick);
 			}
+		}
+		if (saved != null) {
+			restoreVanilla(saved);
 		}
 		save();
 		version++;

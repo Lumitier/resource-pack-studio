@@ -287,6 +287,9 @@ public final class EditorScreen extends Screen {
 	 * fuer das Bild, ".mcmeta" fuer seine Animationsdatei.
 	 */
 	private static byte[] readSource(StudioItem item, PackScanner.Variant v, int part, String suffix) {
+		if (StudioIndex.isVanilla(v)) {
+			v = null;
+		}
 		try {
 			if (v != null && part < v.entries().size() && v.entries().get(part) != null) {
 				String entry = v.entries().get(part) + suffix;
@@ -372,36 +375,6 @@ public final class EditorScreen extends Screen {
 		} catch (Exception e) {
 			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not import {}", file, e);
 			return "resourcepackstudio.icon.not_png";
-		}
-	}
-
-	/**
-	 * Die Textur unveraendert (aus dem gewaehlten Pack oder Vanilla) nach
-	 * "My Drawings" kopieren und waehlen - so kommt auch eine Vanilla-Textur
-	 * ins eigene Pack, etwa um sie spaeter zu bearbeiten. @return ob es ging
-	 */
-	public static boolean copyToDrawings(StudioItem item, PackScanner.Variant v) {
-		try {
-			Path pack = ensureDrawingsPack();
-			for (int i = 0; i < item.parts().size(); i++) {
-				byte[] data = readSource(item, v, i, "");
-				if (data == null) {
-					continue;
-				}
-				Path file = drawingFile(item, i);
-				Files.createDirectories(file.getParent());
-				Files.write(file, data);
-				byte[] meta = readSource(item, v, i, ".mcmeta");
-				if (meta != null) {
-					Files.write(file.resolveSibling(file.getFileName() + ".mcmeta"), meta);
-				}
-			}
-			StudioIndex.selectAfterScan(item.id(), pack);
-			StudioIndex.rescan();
-			return true;
-		} catch (Exception e) {
-			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not copy {} into My Drawings", item.id(), e);
-			return false;
 		}
 	}
 
