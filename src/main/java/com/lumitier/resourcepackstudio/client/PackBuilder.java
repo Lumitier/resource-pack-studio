@@ -243,8 +243,9 @@ public final class PackBuilder {
 		try (OutputStream fos = Files.newOutputStream(tmp);
 		     ZipOutputStream zip = new ZipOutputStream(fos)) {
 			put(zip, "pack.mcmeta", mcmeta(name).getBytes(StandardCharsets.UTF_8));
-			if (icon != null && Files.isRegularFile(icon)) {
-				put(zip, "pack.png", Files.readAllBytes(icon));
+			byte[] iconPng = packIcon(icon, replace);
+			if (iconPng != null) {
+				put(zip, "pack.png", iconPng);
 			}
 
 			for (Map.Entry<String, Source> e : files.entrySet()) {
@@ -467,9 +468,51 @@ public final class PackBuilder {
 		return files.size();
 	}
 
+	/**
+	 * Das Bild des Packs, in dieser Reihenfolge:
+	 *  1. das im Dialog gewaehlte,
+	 *  2. beim Bearbeiten das Bild des alten Packs - sonst verloere ein
+	 *     bearbeitetes Pack sein Icon, nur weil man es nicht neu gewaehlt hat,
+	 *  3. das Icon des Studios. Daran erkennt man gebaute Packs auch in
+	 *     Minecrafts Pack-Liste auf einen Blick.
+	 */
+	private static byte[] packIcon(Path icon, PackScanner.Pack replace) {
+		try {
+			if (icon != null && Files.isRegularFile(icon)) {
+				return Files.readAllBytes(icon);
+			}
+			if (replace != null) {
+				if (replace.zip()) {
+					try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(replace.path().toFile())) {
+						java.util.zip.ZipEntry e = z.getEntry(replace.prefix() + "pack.png");
+						if (e != null) {
+							try (java.io.InputStream in = z.getInputStream(e)) {
+								return in.readAllBytes();
+							}
+						}
+					}
+				} else {
+					Path p = replace.path().resolve("pack.png");
+					if (Files.isRegularFile(p)) {
+						return Files.readAllBytes(p);
+					}
+				}
+			}
+			try (java.io.InputStream in = PackBuilder.class.getResourceAsStream("/assets/resourcepackstudio/icon.png")) {
+				return in == null ? null : in.readAllBytes();
+			}
+		} catch (IOException e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not read the pack icon", e);
+			return null;
+		}
+	}
+
 	private static String mcmeta(String name) {
 		JsonObject pack = new JsonObject();
-		pack.addProperty("description", name + " - made with Resource Pack Studio");
+		// Zwei Zeilen in Minecrafts Pack-Liste: der Name grau, darunter das
+		// Erkennungszeichen in Gold. PackScanner erkennt eigene Packs auch
+		// an diesem Satz - nicht umformulieren.
+		pack.addProperty("description", "\u00a77" + name + "\n\u00a76Made with Resource Pack Studio");
 		pack.addProperty("min_format", PACK_FORMAT);
 		pack.addProperty("max_format", PACK_FORMAT);
 		JsonObject root = new JsonObject();

@@ -65,6 +65,17 @@ public final class PackScanner {
 	}
 
 	/**
+	 * Zweites Erkennungszeichen: die Beschreibung in pack.mcmeta. Packs aus
+	 * Versionen vor 2.2.0 haben die Zeile in credits.txt noch nicht, aber
+	 * schon immer "... made with Resource Pack Studio" in der Beschreibung -
+	 * so tauchen auch sie unter "Pack bearbeiten" auf.
+	 */
+	private static boolean ownMeta(java.io.InputStream in) throws IOException {
+		String text = new String(in.readNBytes(4096), java.nio.charset.StandardCharsets.UTF_8);
+		return text.toLowerCase(Locale.ROOT).contains("made with resource pack studio");
+	}
+
+	/**
 	 * Was ein Pack fuer einen Eintrag hat.
 	 *
 	 * entries hat genau so viele Plaetze wie das Item Teile hat. null heisst:
@@ -170,6 +181,11 @@ public final class PackScanner {
 								own = ownCredits(in);
 							}
 						}
+						if (!own) {
+							try (java.io.InputStream in = Files.newInputStream(p.resolve(MCMETA))) {
+								own = ownMeta(in);
+							}
+						}
 						out.add(new Pack(clean(file), p, false, "", source(root, p), own));
 					} else {
 						findPacks(root, p, depth + 1, out, problems);
@@ -200,7 +216,13 @@ public final class PackScanner {
 					own = ownCredits(in);
 				}
 			}
-			if (zip.getEntry(MCMETA) != null) {
+			ZipEntry meta = zip.getEntry(MCMETA);
+			if (!own && meta != null) {
+				try (java.io.InputStream in = zip.getInputStream(meta)) {
+					own = ownMeta(in);
+				}
+			}
+			if (meta != null) {
 				return new Pack(name, p, true, "", source(root, p), own);
 			}
 			// In einem Unterordner? Nur EINE Ebene - tiefer verschachtelt
