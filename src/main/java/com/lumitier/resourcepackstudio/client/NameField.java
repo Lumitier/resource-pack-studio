@@ -29,6 +29,12 @@ final class NameField {
 		return text.toString();
 	}
 
+	/** Der getippte Name, oder - leer gelassen - der Platzhalter, der dann benutzt wird. */
+	String effective() {
+		String t = text.toString().trim();
+		return t.isEmpty() ? placeholder : t;
+	}
+
 	void reset(String placeholder) {
 		this.text.setLength(0);
 		this.placeholder = placeholder;

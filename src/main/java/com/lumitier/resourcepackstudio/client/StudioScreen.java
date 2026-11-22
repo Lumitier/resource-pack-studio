@@ -868,11 +868,76 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		this.dlgLine1 = "";
 		this.dlgLine2 = "";
 		this.dlgLine3 = "";
-		PackBuilder.build(nameField.text(), icon.path(), asFolder, editing, this::onBuilt);
+		String name = nameField.effective();
+		// Ein Pack, das gerade in Minecraft aktiv ist, haelt Windows fest -
+		// es liesse sich nicht ersetzen, und das Studio legte ein neues an.
+		// Deshalb: kurz abschalten, Minecraft laedt neu und gibt die Datei
+		// frei, dann bauen, danach an derselben Stelle wieder einschalten.
+		this.reenableAt = -1;
+		if (editing != null && PackBuilder.replaces(name, editing) && this.client != null) {
+			var m = this.client.getResourcePackManager();
+			String fileName = editing.path().getFileName().toString();
+			List<String> ids = new ArrayList<>(m.getEnabledIds());
+			for (int i = 0; i < ids.size(); i++) {
+				if (ids.get(i).startsWith("file/") && ids.get(i).endsWith(fileName)) {
+					this.reenableAt = i;
+					ids.remove(i);
+					break;
+				}
+			}
+			if (reenableAt >= 0) {
+				m.setEnabledProfiles(ids);
+				PackScanner.Pack replace = editing;
+				var client = this.client;
+				client.reloadResources().thenRun(() -> client.execute(() ->
+					PackBuilder.build(name, icon.path(), asFolder, replace, this::onBuilt)));
+				return;
+			}
+		}
+		PackBuilder.build(name, icon.path(), asFolder, editing, this::onBuilt);
+	}
+
+	/** Stelle in der Liste aktiver Packs, an der das ersetzte Pack wieder eingeschaltet wird; -1 = keine. */
+	private int reenableAt = -1;
+
+	/** Das gebaute Pack dort einschalten, wo das alte war, und Minecraft neu laden lassen. */
+	private void reenable(java.nio.file.Path file) {
+		if (reenableAt < 0 || this.client == null || file == null) {
+			return;
+		}
+		var m = this.client.getResourcePackManager();
+		m.scanPacks();
+		String fileName = file.getFileName().toString();
+		String id = null;
+		for (var p : m.getProfiles()) {
+			if (p.getId().startsWith("file/") && p.getId().endsWith(fileName)) {
+				id = p.getId();
+				break;
+			}
+		}
+		if (id != null) {
+			List<String> ids = new ArrayList<>(m.getEnabledIds());
+			ids.remove(id);
+			ids.add(Math.min(reenableAt, ids.size()), id);
+			m.setEnabledProfiles(ids);
+			// refreshResourcePacks laedt nur neu, wenn sich die Liste in den
+			// Optionen aendert. Dort stand das Pack aber nie heraus - also
+			// in dem Fall selbst neu laden.
+			List<String> before = new ArrayList<>(this.client.options.resourcePacks);
+			this.client.options.refreshResourcePacks(m);
+			if (before.equals(this.client.options.resourcePacks)) {
+				this.client.reloadResources();
+			}
+		}
+		reenableAt = -1;
 	}
 
 	private void onBuilt(PackBuilder.Built b) {
 		this.built = b;
+		if (reenableAt >= 0) {
+			// Wieder einschalten - das neue, falls gebaut, sonst das alte.
+			reenable(b.ok() ? b.file() : (editing != null ? editing.path() : null));
+		}
 		if (b.ok()) {
 			// Fertig: Auswahl leeren, damit das naechste Pack bei null beginnt.
 			StudioIndex.clearSelection();
@@ -1029,7 +1094,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			this.folderX = x + formatW + 4;
 			segment(ctx, zipX, y, formatW, zipLabel, !asFolder, mouseX, mouseY);
 			segment(ctx, folderX, y, formatW, folderLabel, asFolder, mouseX, mouseY);
-			if (PackBuilder.replaces(nameField.text(), editing)) {
+			if (PackBuilder.replaces(nameField.effective(), editing)) {
 				int hx = folderX + formatW + 10;
 				Ui.drawCenteredIn(ctx, this.textRenderer,
 					Ui.small(Ui.fitSmall(this.textRenderer,
