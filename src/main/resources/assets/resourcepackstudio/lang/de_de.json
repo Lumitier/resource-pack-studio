@@ -144,12 +144,19 @@
   "resourcepackstudio.mine.empty": "Gebaute Packs erscheinen hier.",
   "resourcepackstudio.mine.add": "Textur hinzufügen",
   "resourcepackstudio.mine.save": "Speichern",
-  "resourcepackstudio.mine.add_hint": "Wähl unten etwas aus - es kommt in %s",
+  "resourcepackstudio.mine.add_hint": "Hinzufügen zu %s: links ein Item wählen, dann eine Version anklicken",
   "resourcepackstudio.import.title": "PNG auswählen",
   "resourcepackstudio.import.card": "PNG importieren",
   "resourcepackstudio.import.waiting": "Wird gewählt...",
   "resourcepackstudio.mine.remove": "Aus dem Pack nehmen",
   "resourcepackstudio.mine.close": "Schließen",
   "resourcepackstudio.mine.count.one": "%s Textur",
-  "resourcepackstudio.mine.count.many": "%s Texturen"
+  "resourcepackstudio.mine.count.many": "%s Texturen",
+  "resourcepackstudio.mine.empty_pack": "Dieses Pack ist leer. Klick auf „Textur hinzufügen“ und wähl links in den Listen irgendetwas aus.",
+  "resourcepackstudio.mine.from": "aus %s",
+  "resourcepackstudio.mine.edit": "Im Editor bearbeiten",
+  "resourcepackstudio.mine.other": "Andere Version wählen",
+  "resourcepackstudio.mine.back": "Zurück zu %s",
+  "resourcepackstudio.mine.added": "%s zu %s hinzugefügt",
+  "resourcepackstudio.mine.editing_hint": "Du bearbeitest %s – die Version, die du anklickst, kommt ins Pack"
 }

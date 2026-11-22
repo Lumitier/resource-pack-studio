@@ -144,12 +144,19 @@
   "resourcepackstudio.mine.empty": "Packs you build appear here.",
   "resourcepackstudio.mine.add": "Add texture",
   "resourcepackstudio.mine.save": "Save",
-  "resourcepackstudio.mine.add_hint": "Pick anything below - it goes into %s",
+  "resourcepackstudio.mine.add_hint": "Adding to %s: pick an item on the left, then click a version",
   "resourcepackstudio.import.title": "Choose a PNG",
   "resourcepackstudio.import.card": "Import PNG",
   "resourcepackstudio.import.waiting": "Choosing...",
   "resourcepackstudio.mine.remove": "Take out of the pack",
   "resourcepackstudio.mine.close": "Close",
   "resourcepackstudio.mine.count.one": "%s texture",
-  "resourcepackstudio.mine.count.many": "%s textures"
+  "resourcepackstudio.mine.count.many": "%s textures",
+  "resourcepackstudio.mine.empty_pack": "This pack is empty. Click \"Add texture\" and pick anything from the lists on the left.",
+  "resourcepackstudio.mine.from": "from %s",
+  "resourcepackstudio.mine.edit": "Edit in the editor",
+  "resourcepackstudio.mine.other": "Choose another version",
+  "resourcepackstudio.mine.back": "Back to %s",
+  "resourcepackstudio.mine.added": "%s added to %s",
+  "resourcepackstudio.mine.editing_hint": "You're editing %s - the version you click goes into the pack"
 }

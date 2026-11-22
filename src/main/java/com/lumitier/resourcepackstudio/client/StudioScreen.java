@@ -654,7 +654,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	/** Nach Waehlen oder Entfernen: Zaehler, und beim Bearbeiten die Liste unter dem Pack. */
 	private void rebuildAfterPick() {
-		this.addHint = false;
+		if (editing != null && !packPage && StudioIndex.selected(items.get(selected)) != null) {
+			this.addedLabel = itemNames[selected];
+			this.addedAt = System.currentTimeMillis();
+		}
 		if (editing != null) {
 			buildRows(false);
 		}
@@ -665,9 +668,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private void refreshLabels() {
 		PackScanner.Result r = StudioIndex.result();
 		int packs = r == null ? 0 : r.packs().size();
-		this.sideSub = editing != null && addHint
-			? Text.translatable("resourcepackstudio.mine.add_hint", editing.name()).getString()
-			: editing != null
+		this.sideSub = editing != null
 			? Text.translatable("resourcepackstudio.open.editing", editing.name()).getString()
 			: Text.translatable("resourcepackstudio.studio.summary",
 				packs, StudioIndex.selectionCount()).getString();
@@ -1453,7 +1454,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int cards = vs.size() + 1 + (canDraw ? 1 : 0) + (canImport ? 1 : 0);
 		int rows = (cards + cols - 1) / cols;
 		int extra = vs.isEmpty() ? Ui.advance(Ui.BODY_H, Ui.BODY_D, 0) + 12 : 0;
-		this.contentHeight = rows * (CARD_H + CARD_GAP) + extra;
+		this.contentHeight = rows * (CARD_H + CARD_GAP) + extra + (editing != null ? EDIT_BAR_H + 8 : 0);
 		int gt = gridTop();
 		int maxScroll = Math.max(0, contentHeight - (listBottom - gt));
 		if (scroll > maxScroll) {
@@ -1500,6 +1501,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		ctx.disableScissor();
 		drawBar(ctx, contentBarX(), gt, listBottom - gt, contentHeight, scroll,
 			dragBar == BAR_CONTENT || hoverBar(mouseX, mouseY, contentBarX(), gt, listBottom - gt));
+		if (editing != null) {
+			renderEditBar(ctx, mouseX, mouseY);
+		}
 	}
 
 	// ---- Bildlaufleisten -------------------------------------------------
@@ -1688,12 +1692,24 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	// ------------------------------------------------------------------
 
 	private int pageCloseX, pageSaveX, pageBtnY, pageCloseW, pageSaveW;
+	/** Auf der Pack-Seite gewaehlte Kachel (Index in packEntries), rechts im Detailbereich. */
+	private int pageSel = 0;
+	private static final int INSPECTOR_W = 176;
+	/** Knoepfe im Detailbereich: {x, y, w, h, Aktion}. */
+	private final List<int[]> pageHits = new ArrayList<>();
+	private static final int P_EDIT = 1, P_OTHER = 2, P_IMPORT = 3, P_REMOVE = 4;
+
+	/** Spalten der Kacheln neben dem Detailbereich. */
+	private int pageCols() {
+		int gridW = cw - INSPECTOR_W - 12;
+		return Math.max(1, (gridW + CARD_GAP) / (colW + CARD_GAP));
+	}
 
 	/**
 	 * Kopf: Buchstabe, Name, Anzahl und Format; rechts Schliessen und
-	 * Speichern. Darunter jede Textur im Pack als Kachel - beim Ueberfahren
-	 * Stift (bearbeiten) und x (herausnehmen) - und zuletzt "Hinzufuegen".
-	 * Nur was im Pack steckt, kein Vanilla.
+	 * Speichern. Links die Texturen im Pack als Kacheln (nur was drin ist,
+	 * kein Vanilla), zuletzt "Textur hinzufuegen". Rechts die gewaehlte
+	 * Textur gross, mit klar beschrifteten Knoepfen.
 	 */
 	private void renderPackPage(DrawContext ctx, int mouseX, int mouseY) {
 		int bs = 26;
@@ -1723,20 +1739,24 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.bold(save), pageSaveX + 12, pageBtnY, bh,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFF1A1406);
 
+		if (pageSel >= n) {
+			pageSel = n - 1;
+		}
+		int pc = pageCols();
 		int tiles = n + 1;
-		int rows = (tiles + cols - 1) / cols;
+		int rows = (tiles + pc - 1) / pc;
 		this.contentHeight = rows * (TILE_H + CARD_GAP);
 		int maxScroll = Math.max(0, contentHeight - (listBottom - listTop));
 		if (scroll > maxScroll) {
 			scroll = maxScroll;
 		}
-		boolean inList = mouseY >= listTop && mouseY < listBottom;
-		ctx.enableScissor(cx, listTop, cx + cw, listBottom);
-		Sdf.clip(new ScreenRect(cx, listTop, cw, listBottom - listTop));
-		String tip = null;
+		int gridR = cx + cw - INSPECTOR_W - 12;
+		boolean inList = mouseY >= listTop && mouseY < listBottom && mouseX < gridR;
+		ctx.enableScissor(cx, listTop, gridR, listBottom);
+		Sdf.clip(new ScreenRect(cx, listTop, gridR - cx, listBottom - listTop));
 		for (int i = 0; i < tiles; i++) {
-			int x = cx + (i % cols) * (colW + CARD_GAP);
-			int y = listTop + (i / cols) * (TILE_H + CARD_GAP) - scroll;
+			int x = cx + (i % pc) * (colW + CARD_GAP);
+			int y = listTop + (i / pc) * (TILE_H + CARD_GAP) - scroll;
 			if (y + TILE_H < listTop || y > listBottom) {
 				continue;
 			}
@@ -1748,46 +1768,90 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			int item = packEntries.get(i);
 			StudioItem it = items.get(item);
 			PackScanner.Variant v = StudioIndex.selected(it);
-			int fill = hover ? Theme.CARD_HOVER : Theme.CARD;
+			boolean sel = i == pageSel;
+			int fill = sel ? Theme.ROW_SELECTED : hover ? Theme.CARD_HOVER : Theme.CARD;
 			if (!Surface.glassCard(ctx, x, y, colW, TILE_H, fill)) {
 				Surface.card(ctx, x, y, colW, TILE_H, fill);
 			}
-			if (hover) {
+			if (sel) {
 				Draw.roundedOutline(ctx, x, y, colW, TILE_H, 6, Theme.ACCENT);
 			}
 			drawPreview(ctx, it, v, x + (colW - PREVIEW) / 2, y + CARD_PAD, PREVIEW);
 			String name = Ui.fitSmall(this.textRenderer, itemNames[item], colW - 8);
 			int nw = Ui.widthSmall(this.textRenderer, name);
 			Ui.drawTop(ctx, this.textRenderer, Ui.small(name), x + (colW - nw) / 2, y + CARD_PAD + PREVIEW + 6,
-				Ui.TOP_SMALL, Theme.TEXT);
+				Ui.TOP_SMALL, sel ? Theme.TEXT : Theme.TEXT_MUTED);
 			String from = v == null ? "" : Ui.fitSmall(this.textRenderer, v.pack().name(), colW - 8);
 			int fw = Ui.widthSmall(this.textRenderer, from);
 			Ui.drawTop(ctx, this.textRenderer, Ui.small(from), x + (colW - fw) / 2,
 				y + CARD_PAD + PREVIEW + 6 + Ui.SMALL_H + 4, Ui.TOP_SMALL, Theme.TEXT_FAINT);
-			if (hover) {
-				int bx = x + colW - ICON_BTN - 4;
-				int byy = y + 4;
-				if (iconButton(ctx, G_CLOSE, bx, byy, mouseX, mouseY, Theme.TEXT_MUTED, Theme.WARN)) {
-					tip = Text.translatable("resourcepackstudio.mine.remove").getString();
-				}
-				if (EditorScreen.editable(it)
-						&& iconButton(ctx, G_EDIT, bx - ICON_BTN - 3, byy, mouseX, mouseY, Theme.TEXT_MUTED, Theme.TEXT)) {
-					tip = Text.translatable("resourcepackstudio.editor.add").getString();
-				}
-			}
 		}
 		Sdf.clip(null);
 		ctx.disableScissor();
-		drawBar(ctx, contentBarX(), listTop, listBottom - listTop, contentHeight, scroll,
-			dragBar == BAR_CONTENT || hoverBar(mouseX, mouseY, contentBarX(), listTop, listBottom - listTop));
-		if (tip != null) {
-			int tw = Ui.widthSmall(this.textRenderer, tip) + 12;
-			int ttx = Math.min(mouseX + 10, this.width - tw - 4);
-			Surface.row(ctx, ttx, mouseY + 12, tw, 16, Theme.PANEL | 0xFF000000);
-			Draw.roundedOutline(ctx, ttx, mouseY + 12, tw, 16, 3, Theme.DIVIDER);
-			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(tip), ttx + 6, mouseY + 12, 16,
-				Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT);
+		drawBar(ctx, gridR + 3, listTop, listBottom - listTop, contentHeight, scroll,
+			dragBar == BAR_CONTENT || hoverBar(mouseX, mouseY, gridR + 3, listTop, listBottom - listTop));
+
+		renderInspector(ctx, gridR + 12, listTop, INSPECTOR_W, listBottom - listTop, mouseX, mouseY);
+	}
+
+	/** Rechts: die gewaehlte Textur gross, Name, Herkunft, und was man damit tun kann. */
+	private void renderInspector(DrawContext ctx, int x, int y, int w, int h, int mx, int my) {
+		pageHits.clear();
+		if (!Surface.glassCard(ctx, x, y, w, h, Theme.CARD)) {
+			Surface.card(ctx, x, y, w, h, Theme.CARD);
 		}
+		int p = 12;
+		if (packEntries.isEmpty() || pageSel < 0) {
+			List<String> lines = Ui.wrap(this.textRenderer,
+				Text.translatable("resourcepackstudio.mine.empty_pack").getString(), w - p * 2);
+			int ly = y + p;
+			for (String l : lines) {
+				Ui.drawTop(ctx, this.textRenderer, Ui.small(l), x + p, ly, Ui.TOP_SMALL, Theme.TEXT_MUTED);
+				ly += Ui.SMALL_H + 5;
+			}
+			return;
+		}
+		int item = packEntries.get(pageSel);
+		StudioItem it = items.get(item);
+		PackScanner.Variant v = StudioIndex.selected(it);
+		int big = Math.min(96, w - p * 2);
+		Surface.row(ctx, x + (w - big) / 2 - 6, y + p, big + 12, big + 12, Theme.FIELD);
+		drawPreview(ctx, it, v, x + (w - big) / 2, y + p + 6, big);
+		int ty = y + p + big + 12 + 10;
+		Ui.drawTop(ctx, this.textRenderer, Ui.bold(Ui.fitBold(this.textRenderer, itemNames[item], w - p * 2)),
+			x + p, ty, Ui.TOP_BODY, Theme.TEXT);
+		ty += Ui.BODY_H + 6;
+		String from = v == null ? "" : Text.translatable("resourcepackstudio.mine.from", v.pack().name()).getString();
+		Ui.drawTop(ctx, this.textRenderer, Ui.small(Ui.fitSmall(this.textRenderer, from, w - p * 2)),
+			x + p, ty, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+		ty += Ui.SMALL_H + 12;
+
+		int bw = w - p * 2;
+		int bh = 20;
+		if (EditorScreen.editable(it)) {
+			inspectorButton(ctx, x + p, ty, bw, bh, "resourcepackstudio.mine.edit", true, false, mx, my, P_EDIT);
+			ty += bh + 5;
+		}
+		inspectorButton(ctx, x + p, ty, bw, bh, "resourcepackstudio.mine.other", false, false, mx, my, P_OTHER);
+		ty += bh + 5;
+		if (EditorScreen.editable(it) && it.parts().size() == 1) {
+			inspectorButton(ctx, x + p, ty, bw, bh, "resourcepackstudio.import.card", false, false, mx, my, P_IMPORT);
+			ty += bh + 5;
+		}
+		inspectorButton(ctx, x + p, ty + 4, bw, bh, "resourcepackstudio.mine.remove", false, true, mx, my, P_REMOVE);
+	}
+
+	private void inspectorButton(DrawContext ctx, int x, int y, int w, int h, String key, boolean primary,
+	                             boolean danger, int mx, int my, int action) {
+		boolean hov = Draw.inside(mx, my, x, y, w, h);
+		int fill = primary ? (hov ? Anim.alpha(Theme.ACCENT, 0.85F) : Theme.ACCENT) : hov ? Theme.FIELD_HOVER : Theme.FIELD;
+		Surface.row(ctx, x, y, w, h, fill);
+		String label = Ui.fit(this.textRenderer, Text.translatable(key).getString(), w - 10);
+		int lw = primary ? Ui.widthBold(this.textRenderer, label) : Ui.width(this.textRenderer, label);
+		int colour = primary ? 0xFF1A1406 : danger ? (hov ? Theme.WARN : Anim.alpha(Theme.WARN, 0.8F)) : hov ? Theme.TEXT : Theme.TEXT_MUTED;
+		Ui.drawCenteredIn(ctx, this.textRenderer, primary ? Ui.bold(label) : Ui.text(label), x + (w - lw) / 2, y, h,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, colour);
+		pageHits.add(new int[] {x, y, w, h, action});
 	}
 
 	/** Letzte Kachel: gestrichelter Rahmen, Plus, "Textur hinzufuegen". */
@@ -1826,47 +1890,109 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			refreshLabels();
 			return true;
 		}
-		if (!Draw.inside(mx, my, cx, listTop, cw, listBottom - listTop)) {
-			return false;
+		for (int[] h : pageHits) {
+			if (!Draw.inside(mx, my, h[0], h[1], h[2], h[3]) || pageSel < 0 || pageSel >= packEntries.size()) {
+				continue;
+			}
+			int item = packEntries.get(pageSel);
+			StudioItem it = items.get(item);
+			switch (h[4]) {
+				case P_EDIT -> this.client.setScreen(new EditorScreen(this, it, StudioIndex.selected(it), itemNames[item]));
+				case P_OTHER -> {
+					// Zur Textur: dort eine andere Version waehlen. Unten fuehrt
+					// eine Leiste zurueck zum Pack.
+					this.packPage = false;
+					this.selected = item;
+					this.lastItem = it.id();
+					this.scroll = 0;
+					refreshLabels();
+				}
+				case P_IMPORT -> importImage(it);
+				case P_REMOVE -> {
+					StudioIndex.select(it, null);
+					rebuildAfterPick();
+				}
+				default -> {
+				}
+			}
+			return true;
 		}
+		int gridR = cx + cw - INSPECTOR_W - 12;
+		if (!Draw.inside(mx, my, cx, listTop, gridR - cx, listBottom - listTop)) {
+			return true;
+		}
+		int pc = pageCols();
 		int n = packEntries.size();
 		for (int i = 0; i <= n; i++) {
-			int x = cx + (i % cols) * (colW + CARD_GAP);
-			int y = listTop + (i / cols) * (TILE_H + CARD_GAP) - scroll;
+			int x = cx + (i % pc) * (colW + CARD_GAP);
+			int y = listTop + (i / pc) * (TILE_H + CARD_GAP) - scroll;
 			if (!Draw.inside(mx, my, x, y, colW, TILE_H)) {
 				continue;
 			}
 			if (i == n) {
-				// Hinzufuegen = etwas aus den Listen links waehlen.
-				this.packPage = false;
-				this.addHint = true;
-				expanded.add(CAT_ITEMS);
-				buildRows(false);
-				refreshLabels();
-				return true;
+				startAdding();
+			} else {
+				this.pageSel = i;
 			}
-			int item = packEntries.get(i);
-			StudioItem it = items.get(item);
-			int bx = x + colW - ICON_BTN - 4;
-			int by = y + 4;
-			if (Draw.inside(mx, my, bx, by, ICON_BTN, ICON_BTN)) {
-				StudioIndex.select(it, null);
-				rebuildAfterPick();
-				return true;
-			}
-			if (EditorScreen.editable(it) && Draw.inside(mx, my, bx - ICON_BTN - 3, by, ICON_BTN, ICON_BTN)) {
-				this.client.setScreen(new EditorScreen(this, it, StudioIndex.selected(it), itemNames[item]));
-				return true;
-			}
-			// Kachel selbst: zur Textur springen, dort eine andere Variante waehlen.
-			this.packPage = false;
-			this.selected = item;
-			this.lastItem = it.id();
-			this.scroll = 0;
-			refreshLabels();
 			return true;
 		}
 		return true;
+	}
+
+	/**
+	 * "Textur hinzufuegen": Items links aufklappen, die Pack-Seite verlassen.
+	 * Unten im Inhalt steht dann eine Leiste, die sagt, was zu tun ist, und
+	 * zurueck zum Pack fuehrt.
+	 */
+	private void startAdding() {
+		this.packPage = false;
+		this.addHint = true;
+		this.addedLabel = null;
+		expanded.add(CAT_ITEMS);
+		buildRows(false);
+		refreshLabels();
+	}
+
+	// ------------------------------------------------------------------
+	// Leiste unten, solange ein Pack bearbeitet wird (ausserhalb der Pack-Seite)
+	// ------------------------------------------------------------------
+
+	private int editBarX, editBarY, editBarW, editBackX, editBackW;
+	private static final int EDIT_BAR_H = 28;
+	/** "Goldene Axt hinzugefuegt" - kurz nach einem Klick auf eine Version. */
+	private String addedLabel;
+	private long addedAt;
+
+	private void renderEditBar(DrawContext ctx, int mouseX, int mouseY) {
+		this.editBarX = cx;
+		this.editBarW = cw;
+		this.editBarY = listBottom - EDIT_BAR_H;
+		Surface.row(ctx, editBarX, editBarY, editBarW, EDIT_BAR_H, Theme.PANEL | 0xFF000000);
+		Draw.roundedOutline(ctx, editBarX, editBarY, editBarW, EDIT_BAR_H, 6, Anim.alpha(Theme.ACCENT, 0.6F));
+		packBadge(ctx, editing.name(), editBarX + 6, editBarY + (EDIT_BAR_H - 16) / 2, 16, true);
+
+		String back = Text.translatable("resourcepackstudio.mine.back", editing.name()).getString();
+		this.editBackW = Ui.widthBold(this.textRenderer, back) + 20;
+		this.editBackX = editBarX + editBarW - editBackW - 5;
+		int bh = EDIT_BAR_H - 8;
+		boolean hb = Draw.inside(mouseX, mouseY, editBackX, editBarY + 4, editBackW, bh);
+		Surface.row(ctx, editBackX, editBarY + 4, editBackW, bh, hb ? Anim.alpha(Theme.ACCENT, 0.85F) : Theme.ACCENT);
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.bold(back), editBackX + 10, editBarY + 4, bh,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, 0xFF1A1406);
+
+		String msg;
+		int colour;
+		if (addedLabel != null && System.currentTimeMillis() - addedAt < 2500L) {
+			msg = Text.translatable("resourcepackstudio.mine.added", addedLabel, editing.name()).getString();
+			colour = Theme.OK;
+		} else {
+			msg = Text.translatable(addHint ? "resourcepackstudio.mine.add_hint" : "resourcepackstudio.mine.editing_hint",
+				editing.name()).getString();
+			colour = Theme.TEXT_MUTED;
+		}
+		int tx = editBarX + 6 + 16 + 8;
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(Ui.fit(this.textRenderer, msg, editBackX - tx - 8)),
+			tx, editBarY, EDIT_BAR_H, Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, colour);
 	}
 
 	private volatile boolean importing;
@@ -2354,6 +2480,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 						}
 						this.packPage = true;
 						this.addHint = false;
+						this.pageSel = 0;
 						this.scroll = 0;
 						buildRows(false);
 						refreshLabels();
@@ -2410,6 +2537,16 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 		if (packPage && editing != null) {
 			return packPageClick(mx, my);
+		}
+		if (editing != null && Draw.inside(mx, my, editBarX, editBarY, editBarW, EDIT_BAR_H)) {
+			if (Draw.inside(mx, my, editBackX, editBarY, editBackW, EDIT_BAR_H)) {
+				this.packPage = true;
+				this.addHint = false;
+				this.scroll = 0;
+				buildRows(false);
+				refreshLabels();
+			}
+			return true;
 		}
 
 		// Rescan
