@@ -56,7 +56,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	private static final int PREVIEW = 48;
 	private static final int CARD_PAD = 8;
-	private static final int CARD_H = CARD_PAD + PREVIEW + 6 + Ui.SMALL_H + Ui.SMALL_D + CARD_PAD;
+	private static final int CARD_H = CARD_PAD + PREVIEW + 6 + Ui.SMALL_H + 4 + Ui.SMALL_H + Ui.SMALL_D + CARD_PAD;
 	private static final int CARD_MIN_W = 76;
 	private static final int CARD_GAP = Metrics.CARD_GAP;
 	private static final int ITEM_ICON = 16;
@@ -108,6 +108,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private String[] cardNames = new String[0];
 	private String headerTitle = "";
 	private String headerCount = "";
+	private String headerSub = "";
+	/** Kleine Zeile unter dem Namen einer Karte: woher die Version kommt. */
+	private String[] cardFrom = new String[0];
 	private String sideTitle = "";
 	private String sideSub = "";
 	private String vanillaLabel = "";
@@ -410,7 +413,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private List<Integer> packEntries = List.of();
 	/** Hoehe einer Pack-Zeile links: Name und darunter Anzahl/Format. */
 	private static final int PACK_ROW_H = 30;
-	private static final int TILE_H = CARD_H + Ui.SMALL_H + 4;
+	private static final int TILE_H = CARD_H;
 
 	/** Eigene Packs in der Reihenfolge der Seitenleiste. */
 	private List<PackScanner.Pack> mine = List.of();
@@ -680,14 +683,36 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int n = variants.length > selected ? variants[selected].size() : 0;
 		String key = cur.sound() ? "resourcepackstudio.studio.count.sound" : "resourcepackstudio.studio.count";
 		this.headerCount = Text.translatable(key + (n == 1 ? ".one" : ".many"), n).getString();
+		PackScanner.Variant ch = StudioIndex.selected(cur);
+		String picked = ch == null
+			? (editing != null ? Text.translatable("resourcepackstudio.studio.not_in_pack").getString() : vanillaLabel)
+			: StudioIndex.isVanilla(ch) ? vanillaLabel : ch.pack().name();
+		int versions = n + 1;
+		String vc = Text.translatable("resourcepackstudio.studio.versions" + (versions == 1 ? ".one" : ".many"), versions).getString();
+		this.headerSub = vc + "   \u00b7   " + Text.translatable("resourcepackstudio.studio.picked", picked).getString();
 
 		// Karte 0 ist Vanilla, danach die Packs.
 		int tw = colW - CARD_PAD * 2;
 		List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
 		this.cardNames = new String[vs.size() + 1];
+		this.cardFrom = new String[vs.size() + 1];
 		cardNames[0] = Ui.fitSmall(this.textRenderer, vanillaLabel, tw);
+		cardFrom[0] = "Minecraft";
+		java.nio.file.Path drawings = EditorScreen.drawingsPack();
 		for (int i = 0; i < vs.size(); i++) {
-			cardNames[i + 1] = Ui.fitSmall(this.textRenderer, vs.get(i).pack().name(), tw);
+			PackScanner.Pack pk = vs.get(i).pack();
+			cardNames[i + 1] = Ui.fitSmall(this.textRenderer, pk.name(), tw);
+			String from;
+			if (pk.path().equals(drawings)) {
+				from = Text.translatable("resourcepackstudio.studio.from_drawings").getString();
+			} else if (pk.own()) {
+				from = Text.translatable("resourcepackstudio.studio.from_own").getString();
+			} else if (pk.source().contains("/")) {
+				from = pk.source().substring(pk.source().lastIndexOf('/') + 1);
+			} else {
+				from = pk.zip() ? ".zip" : Text.translatable("resourcepackstudio.format.folder").getString();
+			}
+			cardFrom[i + 1] = Ui.fitSmall(this.textRenderer, from, tw);
 		}
 	}
 
@@ -1380,6 +1405,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	// Kleine Symbole, 9x9 - Pixel fuer Pixel wie im Editor.
 	private static final String[] G_CLOSE = {"#.......#", ".#.....#.", "..#...#..", "...#.#...", "....#....",
 		"...#.#...", "..#...#..", ".#.....#.", "#.......#"};
+	private static final String[] G_UPLOAD = {"....#....", "...###...", "..#.#.#..", "....#....", "....#....",
+		"....#....", "#.......#", "#.......#", "#########"};
 	private static final String[] G_EDIT = {"......##.", ".....#..#", "....#..#.", "...#..#..", "..#..#...",
 		".#..#....", "#..#.....", "##.......", "###......"};
 	private static final int ICON_BTN = 15;
@@ -1431,7 +1458,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int tw = w - bs - 8;
 		int n = open ? packEntries.size() : StudioIndex.ownCount(pk);
 		String meta = (n < 0 ? "" : Text.translatable(n == 1 ? "resourcepackstudio.mine.count.one"
-			: "resourcepackstudio.mine.count.many", n).getString() + "   ") + (rowCount[row] == null ? "" : rowCount[row]);
+			: "resourcepackstudio.mine.count.many", n).getString() + "  \u00b7  ") + (rowCount[row] == null ? "" : rowCount[row]);
 		int top = y + (PACK_ROW_H - (Ui.BODY_H + 4 + Ui.SMALL_H)) / 2;
 		Ui.drawTop(ctx, this.textRenderer, Ui.text(Ui.fit(this.textRenderer, rowLabel[row], tw)), tx, top,
 			Ui.TOP_BODY, open ? Theme.TEXT : Theme.TEXT_MUTED);
@@ -1466,7 +1493,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
 		Ui.drawCenteredIn(ctx, this.textRenderer,
 			Ui.bold(Ui.fitBold(this.textRenderer, rowLabel[row], w - 14 - cw - 6)), x + 14, y, Metrics.ROW_H,
-			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, hover ? Theme.TEXT : Theme.TEXT_MUTED);
 	}
 
 	private void drawItemRow(DrawContext ctx, int item, int x, int y, int w, boolean hover) {
@@ -1513,9 +1540,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int headY = cy + 10;
 		Ui.drawTop(ctx, this.textRenderer, Ui.title(headerTitle), cx, headY, Ui.TOP_TITLE, Theme.TEXT);
 		if (StudioIndex.result() != null) {
-			Ui.drawTop(ctx, this.textRenderer, Ui.small(headerCount),
-				cx + Ui.widthTitle(this.textRenderer, headerTitle) + 8,
-				headY + Ui.TITLE_H - Ui.SMALL_H, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+			// Darunter, klein: wie viele Versionen es gibt und welche gewaehlt ist.
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(Ui.fitSmall(this.textRenderer, headerSub, cw - 220)),
+				cx, listTop, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+			renderTools(ctx, mouseX, mouseY);
 		}
 
 		// Knopf oben rechts: neu suchen. Waehrend einer Suche steht dort,
@@ -1527,17 +1555,22 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		this.rescanX = cx + cw - rescanW;
 		this.rescanY = cy + (Metrics.TITLE_H - rescanH) / 2;
 		boolean btnHover = !scanning && Draw.inside(mouseX, mouseY, rescanX, rescanY, rescanW, rescanH);
-		Surface.row(ctx, rescanX, rescanY, rescanW, rescanH, btnHover ? Theme.FIELD_HOVER : Theme.FIELD);
+		// Dezent: nur Text, eine Flaeche erst beim Ueberfahren.
+		if (btnHover) {
+			Surface.row(ctx, rescanX, rescanY, rescanW, rescanH, Theme.FIELD_HOVER);
+		}
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(btn), rescanX + 10, rescanY, rescanH,
-			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, scanning ? Theme.TEXT_FAINT : Theme.TEXT_MUTED);
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, scanning ? Theme.TEXT_FAINT : btnHover ? Theme.TEXT : Theme.TEXT_MUTED);
 
 		if (StudioIndex.selectionCount() > 0) {
 			this.clearW = Ui.width(this.textRenderer, clearLabel) + 20;
-			this.clearX = rescanX - 6 - clearW;
+			this.clearX = rescanX - 2 - clearW;
 			boolean ch = Draw.inside(mouseX, mouseY, clearX, rescanY, clearW, rescanH);
-			Surface.row(ctx, clearX, rescanY, clearW, rescanH, ch ? Theme.FIELD_HOVER : Theme.FIELD);
+			if (ch) {
+				Surface.row(ctx, clearX, rescanY, clearW, rescanH, Theme.FIELD_HOVER);
+			}
 			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(clearLabel), clearX + 10, rescanY, rescanH,
-				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT_MUTED);
+				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, ch ? Theme.TEXT : Theme.TEXT_MUTED);
 		} else {
 			this.clearW = 0;
 		}
@@ -1555,9 +1588,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		}
 
 		List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
-		boolean canDraw = EditorScreen.editable(items.get(selected));
-		boolean canImport = canDraw && items.get(selected).parts().size() == 1;
-		int cards = vs.size() + 1 + (canDraw ? 1 : 0) + (canImport ? 1 : 0);
+		// Bearbeiten und Importieren sind Knoepfe unter dem Titel, keine Karten mehr.
+		boolean canDraw = false;
+		boolean canImport = false;
+		int cards = vs.size() + 1;
 		int rows = (cards + cols - 1) / cols;
 		int extra = vs.isEmpty() ? Ui.advance(Ui.BODY_H, Ui.BODY_D, 0) + 12 : 0;
 		this.contentHeight = rows * (CARD_H + CARD_GAP) + extra + (editing != null ? EDIT_BAR_H + 8 : 0);
@@ -1596,9 +1630,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			}
 			PackScanner.Variant v = i == 0 ? null : vs.get(i - 1);
 			boolean isChosen = v == null ? chosen == null || StudioIndex.isVanilla(chosen) : v.equals(chosen);
-			drawCard(ctx, bx, by, item, v, i < cardNames.length ? cardNames[i] : "", isChosen, hover);
+			drawCard(ctx, bx, by, item, v, i < cardNames.length ? cardNames[i] : "",
+				i < cardFrom.length ? cardFrom[i] : "", isChosen, hover);
 		}
-		if (vs.isEmpty() && !canDraw) {
+		if (vs.isEmpty()) {
 			Ui.drawTop(ctx, this.textRenderer,
 				Ui.text(Ui.fit(this.textRenderer, emptyLabel, cw)),
 				cx, gt + CARD_H + CARD_GAP + 6 - scroll, Ui.TOP_BODY, Theme.TEXT_FAINT);
@@ -1708,12 +1743,70 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private boolean volDragging;
 
 	/** Oberkante der Karten: bei Sounds unter der Lautstaerke-Zeile. */
+	/** Zeile unter dem Titel ("2 Versionen, gewaehlt: Vanilla"). */
+	private static final int SUB_H = Ui.SMALL_H + 10;
+	/** Knopfzeile "Bearbeiten / PNG importieren". */
+	private static final int TOOLS_H = 22 + 12;
+
+	/** Oberkante unter Untertitel und Knoepfen - dort beginnen Lautstaerke, Himmel-Hinweis und Karten. */
+	private int itemTop() {
+		if (items.isEmpty()) {
+			return listTop;
+		}
+		return listTop + SUB_H + (EditorScreen.editable(items.get(selected)) ? TOOLS_H : 4);
+	}
+
 	private int gridTop() {
 		if (items.isEmpty()) {
 			return listTop;
 		}
 		StudioItem it = items.get(selected);
-		return it.sound() ? listTop + VOL_ROW : it.sky() ? listTop + SKY_ROW : listTop;
+		int top = itemTop();
+		return it.sound() ? top + VOL_ROW : it.sky() ? top + SKY_ROW : top;
+	}
+
+	private int toolEditX, toolImportX, toolY, toolEditW, toolImportW;
+	private static final int TOOL_H = 22;
+
+	/** Knoepfe unter dem Titel: Bearbeiten (Stift), PNG importieren (Pfeil). */
+	private void renderTools(DrawContext ctx, int mouseX, int mouseY) {
+		this.toolEditW = 0;
+		this.toolImportW = 0;
+		StudioItem it = items.get(selected);
+		if (!EditorScreen.editable(it)) {
+			return;
+		}
+		this.toolY = listTop + SUB_H;
+		int x = cx;
+		String edit = Text.translatable("resourcepackstudio.mine.edit_short").getString();
+		this.toolEditX = x;
+		this.toolEditW = Ui.width(this.textRenderer, edit) + 34;
+		toolButton(ctx, G_EDIT, edit, toolEditX, toolY, toolEditW, mouseX, mouseY);
+		x += toolEditW + 6;
+		if (it.parts().size() == 1) {
+			String imp = Text.translatable(importing ? "resourcepackstudio.import.waiting" : "resourcepackstudio.import.card").getString();
+			this.toolImportX = x;
+			this.toolImportW = Ui.width(this.textRenderer, imp) + 34;
+			toolButton(ctx, G_UPLOAD, imp, toolImportX, toolY, toolImportW, mouseX, mouseY);
+		}
+	}
+
+	private void toolButton(DrawContext ctx, String[] glyph, String label, int x, int y, int w, int mx, int my) {
+		boolean h = Draw.inside(mx, my, x, y, w, TOOL_H);
+		Surface.row(ctx, x, y, w, TOOL_H, h ? Theme.FIELD_HOVER : Theme.FIELD);
+		Draw.roundedOutline(ctx, x, y, w, TOOL_H, 5, Theme.DIVIDER);
+		int c = h ? Theme.TEXT : Theme.TEXT_MUTED;
+		int gx = x + 9;
+		int gy = y + (TOOL_H - 9) / 2;
+		for (int r = 0; r < glyph.length; r++) {
+			for (int k = 0; k < glyph[r].length(); k++) {
+				if (glyph[r].charAt(k) == '#') {
+					ctx.fill(gx + k, gy + r, gx + k + 1, gy + r + 1, c);
+				}
+			}
+		}
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(label), x + 24, y, TOOL_H,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, h ? Theme.TEXT : Theme.TEXT);
 	}
 
 	// ---- Hinweis bei Himmeln ---------------------------------------------
@@ -1735,7 +1828,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			: installed == null
 			? Text.translatable("resourcepackstudio.sky.needs", SKYBOXIFY).getString()
 			: Text.translatable("resourcepackstudio.sky.wrong", SKYBOXIFY, installed).getString();
-		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(Ui.fit(this.textRenderer, text, cw)), cx, listTop, 20,
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(Ui.fit(this.textRenderer, text, cw)), cx, itemTop(), 20,
 			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, ok ? Theme.TEXT_MUTED : Theme.WARN);
 	}
 
@@ -1750,7 +1843,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private void renderVolume(DrawContext ctx, int mouseX, int mouseY) {
 		String label = Text.translatable("resourcepackstudio.sound.volume").getString();
 		int h = 20;
-		this.volY = listTop;
+		this.volY = itemTop();
 		int mid = volY + h / 2;
 		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(label), cx, volY, h,
 			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_MUTED);
@@ -2198,7 +2291,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	}
 
 	private void drawCard(DrawContext ctx, int x, int y, StudioItem item, PackScanner.Variant v,
-	                      String name, boolean chosen, boolean hover) {
+	                      String name, String from, boolean chosen, boolean hover) {
 		Surface.shadowCard(ctx, x, y, colW, CARD_H, 3, 2, Theme.SHADOW_CARD);
 		int fill = chosen ? Theme.ROW_SELECTED : (hover ? Theme.CARD_HOVER : Theme.CARD);
 		if (!Surface.glassCard(ctx, x, y, colW, CARD_H, fill)) {
@@ -2216,6 +2309,21 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		Ui.drawTop(ctx, this.textRenderer, Ui.small(name),
 			x + (colW - nw) / 2, iy + PREVIEW + 6, Ui.TOP_SMALL,
 			chosen ? Theme.TEXT : Theme.TEXT_MUTED);
+		int fw = Ui.widthSmall(this.textRenderer, from);
+		Ui.drawTop(ctx, this.textRenderer, Ui.small(from),
+			x + (colW - fw) / 2, iy + PREVIEW + 6 + Ui.SMALL_H + 4, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+		if (chosen) {
+			// Haekchen oben rechts: auf einen Blick, welche gewaehlt ist.
+			int r = 6;
+			int dcx = x + colW - 6 - r;
+			int dcy = y + 6 + r;
+			Draw.dot(ctx, dcx, dcy, r, Theme.TOGGLE_ON);
+			int[][] chk = {{-3, 0}, {-2, 1}, {-1, 2}, {0, 1}, {1, 0}, {2, -1}, {3, -2}};
+			for (int[] p : chk) {
+				ctx.fill(dcx + p[0], dcy + p[1], dcx + p[0] + 1, dcy + p[1] + 1, 0xFFFFFFFF);
+				ctx.fill(dcx + p[0], dcy + p[1] + 1, dcx + p[0] + 1, dcy + p[1] + 2, 0xFFFFFFFF);
+			}
+		}
 	}
 
 	/**
@@ -2673,6 +2781,15 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		if (packPage && editing != null) {
 			return packPageClick(mx, my);
 		}
+		if (toolEditW > 0 && Draw.inside(mx, my, toolEditX, toolY, toolEditW, TOOL_H)) {
+			StudioItem cur = items.get(selected);
+			this.client.setScreen(new EditorScreen(this, cur, StudioIndex.selected(cur), itemNames[selected]));
+			return true;
+		}
+		if (toolImportW > 0 && Draw.inside(mx, my, toolImportX, toolY, toolImportW, TOOL_H)) {
+			importImage(items.get(selected));
+			return true;
+		}
 		if (editing != null && Draw.inside(mx, my, editBarX, editBarY, editBarW, EDIT_BAR_H)) {
 			if (editAddW > 0 && Draw.inside(mx, my, editAddX, editBarY, editAddW, EDIT_BAR_H)) {
 				StudioItem cur = items.get(selected);
@@ -2715,9 +2832,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int gt = gridTop();
 		if (StudioIndex.result() != null && Draw.inside(mx, my, cx, gt, cw, listBottom - gt)) {
 			List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
-			boolean canDraw = EditorScreen.editable(items.get(selected));
-			boolean canImport = canDraw && items.get(selected).parts().size() == 1;
-			int cards = vs.size() + 1 + (canDraw ? 1 : 0) + (canImport ? 1 : 0);
+			boolean canDraw = false;
+			boolean canImport = false;
+			int cards = vs.size() + 1;
 			for (int i = 0; i < cards; i++) {
 				int bx = cx + (i % cols) * (colW + CARD_GAP);
 				int by = gt + (i / cols) * (CARD_H + CARD_GAP) - scroll;

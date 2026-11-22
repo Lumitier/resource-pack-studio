@@ -163,5 +163,12 @@
   "resourcepackstudio.mine.take_out": "Aus %s entfernen",
   "resourcepackstudio.mine.save_changes": "Änderungen speichern",
   "resourcepackstudio.mine.saved_title": "Änderungen gespeichert",
-  "resourcepackstudio.mine.ok": "OK"
+  "resourcepackstudio.mine.ok": "OK",
+  "resourcepackstudio.mine.edit_short": "Bearbeiten",
+  "resourcepackstudio.studio.not_in_pack": "nicht im Pack",
+  "resourcepackstudio.studio.picked": "gewählt: %s",
+  "resourcepackstudio.studio.from_drawings": "deine Zeichnung",
+  "resourcepackstudio.studio.from_own": "dein Pack",
+  "resourcepackstudio.studio.versions.one": "1 Version",
+  "resourcepackstudio.studio.versions.many": "%s Versionen"
 }
