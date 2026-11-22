@@ -134,13 +134,17 @@ public final class ItemDiscovery {
 			out.add(found);
 		}
 		TINTS = Map.copyOf(tints);
+		// Partikel vor den Texturen: Ihre Bilder gelten danach als vergeben
+		// und tauchen nicht nochmal einzeln unter Texturen auf.
+		int particles = addParticles(pack, out);
+		int hud = addHud(pack, out);
 		int textures = addTextures(pack, out);
 		for (String dim : StudioItems.SKY_DIMS) {
 			out.add(StudioItems.sky(dim));
 		}
 		int sounds = addSounds(pack, out);
-		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] {} entries: {} block(s), {} other texture(s), {} sound(s), the rest items. {} item(s) skipped (chests, beds, heads ...).",
-			out.size(), cubes, textures, sounds, skipped);
+		ResourcePackStudio.LOGGER.info("[Resource Pack Studio] {} entries: {} block(s), {} HUD, {} particle(s), {} other texture(s), {} sound(s), the rest items. {} item(s) skipped (chests, beds, heads ...).",
+			out.size(), cubes, hud, particles, textures, sounds, skipped);
 		return out;
 	}
 
@@ -319,6 +323,201 @@ public final class ItemDiscovery {
 	 * Texturen (Lava, Wasser) sind normale Bilder mit .mcmeta daneben - die
 	 * nimmt PackBuilder automatisch mit.
 	 */
+	/**
+	 * Ein Eintrag je Bilderfolge aus assets/minecraft/particles/*.json.
+	 *
+	 * WARUM NACH BILDERFOLGE UND NICHT NACH PARTIKEL: Mehrere Partikel
+	 * teilen sich dieselben Bilder (Rauch, Wolke, Staub ...). Waehlt man
+	 * einen davon, aendern sich im Spiel alle - zwei Eintraege fuer dieselben
+	 * Bilder wuerden das Gegenteil versprechen. Der Eintrag nennt deshalb
+	 * alle Partikel, die die Folge benutzen.
+	 *
+	 * Alte 1.8-Packs hatten alle Partikel auf EINEM Blatt
+	 * (particle/particles.png) - das passt nicht auf einzelne Bilder und
+	 * bleibt daher unter Texturen.
+	 */
+	private static int addParticles(ResourcePack pack, List<StudioItem> out) {
+		// Bilderfolge (Pfade, durch Komma verbunden) -> Partikelnamen.
+		java.util.TreeMap<String, java.util.TreeSet<String>> bySet = new java.util.TreeMap<>();
+		java.util.Map<String, List<String>> frames = new HashMap<>();
+		try {
+			pack.findResources(ResourceType.CLIENT_RESOURCES, Identifier.DEFAULT_NAMESPACE, "particles",
+				(id, supplier) -> {
+					String p = id.getPath();
+					if (!p.endsWith(".json")) {
+						return;
+					}
+					String name = p.substring(p.lastIndexOf('/') + 1, p.length() - 5);
+					try (InputStream s = supplier.get();
+					     InputStreamReader r = new InputStreamReader(s, StandardCharsets.UTF_8)) {
+						JsonElement root = JsonParser.parseReader(r);
+						if (!root.isJsonObject() || !root.getAsJsonObject().has("textures")) {
+							return;
+						}
+						List<String> list = new ArrayList<>();
+						for (JsonElement t : root.getAsJsonObject().getAsJsonArray("textures")) {
+							Identifier tid = Identifier.tryParse(t.getAsString());
+							if (tid != null && tid.getNamespace().equals(Identifier.DEFAULT_NAMESPACE)) {
+								list.add("particle/" + tid.getPath());
+							}
+						}
+						if (list.isEmpty()) {
+							return;
+						}
+						String key = String.join(",", list);
+						bySet.computeIfAbsent(key, k -> new java.util.TreeSet<>()).add(name);
+						frames.putIfAbsent(key, List.copyOf(list));
+					} catch (Exception e) {
+						ResourcePackStudio.LOGGER.debug("[Resource Pack Studio] Skipped particle {}", p, e);
+					}
+				});
+		} catch (Throwable e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not list the vanilla particles.", e);
+		}
+		// Nach Name sortiert, nicht nach Bildpfad - so steht "Explosion"
+		// bei E und nicht dort, wo zufaellig ihr erstes Bild einsortiert ist.
+		List<StudioItem> found = new ArrayList<>();
+		for (Map.Entry<String, java.util.TreeSet<String>> e : bySet.entrySet()) {
+			List<StudioItem.Part> parts = new ArrayList<>();
+			for (String f : frames.get(e.getKey())) {
+				parts.add(new StudioItem.Part(f, List.of(), true));
+			}
+			found.add(new StudioItem(StudioItems.PARTICLE_ID + String.join("+", e.getValue()),
+				StudioItems.PARTICLES, List.copyOf(parts), null, null));
+		}
+		found.sort(java.util.Comparator.comparing(StudioItem::id));
+		out.addAll(found);
+		return found.size();
+	}
+
+	/**
+	 * HUD-Bilder (Herzen, Hotbar, Hunger, Ruestung, Luft, XP-Leiste ...) und
+	 * das Feuer in der Ego-Sicht - zusammengefasst zu Eintraegen.
+	 *
+	 * Seit 1.20.2 liegt jedes HUD-Bild einzeln unter gui/sprites/hud/.
+	 * Alte Packs haben alles auf einem Blatt (gui/icons.png) - das laesst
+	 * sich nicht auf Herzen, Hotbar usw. aufteilen und bleibt unter Texturen.
+	 *
+	 * DAS FEUER der Ego-Sicht ist dasselbe Bild wie der Feuer-Block
+	 * (block/fire_1, fire_0). Wer es hier waehlt, aendert beides - so ist es
+	 * auch im Spiel.
+	 */
+	private static int addHud(ResourcePack pack, List<StudioItem> out) {
+		java.util.TreeSet<String> paths = new java.util.TreeSet<>();
+		java.util.Set<String> all = new HashSet<>();
+		try {
+			pack.findResources(ResourceType.CLIENT_RESOURCES, Identifier.DEFAULT_NAMESPACE, "textures",
+				(id, supplier) -> {
+					String p = id.getPath();
+					if (p.endsWith(".png")) {
+						String m = p.substring("textures/".length(), p.length() - 4);
+						all.add(m);
+						if (m.startsWith(HUD_DIR)) {
+							paths.add(m);
+						}
+					}
+				});
+		} catch (Throwable e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not list the HUD textures.", e);
+		}
+		// Schluessel -> Bilder, Schluessel -> Bereich. Sortiert nach Schluessel.
+		java.util.TreeMap<String, List<String>> groups = new java.util.TreeMap<>();
+		Map<String, String> area = new HashMap<>();
+		for (String p : paths) {
+			String rest = p.substring(HUD_DIR.length());
+			String key;
+			String where;
+			if (rest.startsWith("heart/")) {
+				String n = rest.substring("heart/".length());
+				String kind = n.startsWith("container") ? "container"
+					: n.startsWith("vehicle_") ? "vehicle"
+					: n.startsWith("hardcore_") ? "hardcore"
+					: n.contains("_") && !n.startsWith("full") && !n.startsWith("half")
+					? n.substring(0, n.indexOf('_')) : "normal";
+				key = "heart/" + kind;
+				where = "hearts";
+			} else if (rest.indexOf('/') >= 0) {
+				continue;                            // Unterordner, die keine Herzen sind: unbekannt
+			} else if (rest.startsWith("hotbar")) {
+				key = "hotbar";
+				where = "hotbar";
+			} else if (rest.startsWith("food_")) {
+				key = rest.contains("hunger") ? "food_hunger" : "food";
+				where = "bars";
+			} else if (rest.startsWith("armor_")) {
+				key = "armor";
+				where = "bars";
+			} else if (rest.startsWith("air")) {
+				key = "air";
+				where = "bars";
+			} else if (rest.startsWith("experience_bar")) {
+				key = "experience_bar";
+				where = "bars";
+			} else if (rest.startsWith("jump_bar")) {
+				key = "jump_bar";
+				where = "bars";
+			} else if (rest.startsWith("crosshair")) {
+				key = "crosshair";
+				where = "other";
+			} else {
+				key = rest;
+				where = "other";
+			}
+			groups.computeIfAbsent(key, k -> new ArrayList<>()).add(p);
+			area.putIfAbsent(key, where);
+		}
+		// Feuer in der Ego-Sicht: beide Bilder, wenn es sie gibt.
+		for (String fire : new String[] {"fire", "soul_fire"}) {
+			List<String> f = new ArrayList<>();
+			for (String n : new String[] {"block/" + fire + "_1", "block/" + fire + "_0"}) {
+				if (all.contains(n)) {
+					f.add(n);
+				}
+			}
+			if (!f.isEmpty()) {
+				groups.put(fire, f);
+				area.put(fire, "first_person");
+			}
+		}
+
+		int n = 0;
+		for (String a : new String[] {"first_person", "hearts", "hotbar", "bars", "other"}) {
+			for (Map.Entry<String, List<String>> e : groups.entrySet()) {
+				if (!a.equals(area.get(e.getKey()))) {
+					continue;
+				}
+				List<String> files = new ArrayList<>(e.getValue());
+				// Voll zuerst, dann halb - die Vorschau zeichnet daraus eine
+				// Herzreihe. Hotbar zuerst, dann der Auswahlrahmen.
+				files.sort(java.util.Comparator.comparingInt(ItemDiscovery::hudOrder)
+					.thenComparing(java.util.Comparator.naturalOrder()));
+				List<StudioItem.Part> parts = new ArrayList<>();
+				for (String f : files) {
+					parts.add(new StudioItem.Part(f, List.of(), true));
+				}
+				out.add(new StudioItem(StudioItems.HUD_ID + e.getKey(), StudioItems.HUD_GROUP + a,
+					List.copyOf(parts), null, null));
+				n++;
+			}
+		}
+		return n;
+	}
+
+	private static final String HUD_DIR = "gui/sprites/hud/";
+
+	/** Reihenfolge der Bilder eines HUD-Eintrags: Hauptbild zuerst. */
+	private static int hudOrder(String path) {
+		String n = path.substring(path.lastIndexOf('/') + 1);
+		int o = 0;
+		if (n.contains("hardcore")) o += 2;
+		if (n.contains("blinking")) o += 4;
+		if (n.contains("half")) o += 1;
+		if (n.contains("selection")) o += 1;
+		if (n.contains("offhand") || n.contains("attack")) o += 3;
+		if (n.contains("empty") || n.contains("background")) o += 1;
+		return o;
+	}
+
 	private static int addTextures(ResourcePack pack, List<StudioItem> out) {
 		Set<String> covered = new HashSet<>();
 		for (StudioItem it : out) {

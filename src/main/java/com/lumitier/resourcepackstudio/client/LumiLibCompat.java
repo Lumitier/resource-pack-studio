@@ -50,6 +50,8 @@ public final class LumiLibCompat {
 			.action("open", LumiLibCompat::open)
 			.action("rescan", StudioIndex::rescan)
 			.action("open_folder", LumiLibCompat::openFolder)
+			// Die Sprache stellt LumiLib fuer alle Mods darauf zentral ein.
+			.note("language")
 			.build();
 	}
 

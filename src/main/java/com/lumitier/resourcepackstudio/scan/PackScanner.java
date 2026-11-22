@@ -47,8 +47,22 @@ public final class PackScanner {
 
 	private PackScanner() {}
 
-	/** Ein gefundenes Pack. prefix ist "" oder der Unterordner in der Zip, mit "/". */
-	public record Pack(String name, Path path, boolean zip, String prefix, String source) {}
+	/**
+	 * Ein gefundenes Pack. prefix ist "" oder der Unterordner in der Zip, mit "/".
+	 *
+	 * own: vom Studio selbst gebaut (erkennbar an der credits.txt). Solche
+	 * Packs sind Quellen wie alle anderen - so lassen sie sich wieder
+	 * oeffnen und weiterbearbeiten, und was aus einem inzwischen
+	 * geloeschten Pack stammte, ist ueber sie noch da.
+	 */
+	public record Pack(String name, Path path, boolean zip, String prefix, String source, boolean own) {}
+
+	/** Datei mit der Auswahl, die ein selbst gebautes Pack enthaelt - siehe PackBuilder. */
+	public static final String SELECTION_FILE = "rps-selection.json";
+
+	private static boolean ownCredits(java.io.InputStream in) throws IOException {
+		return new String(in.readNBytes(64), java.nio.charset.StandardCharsets.UTF_8).startsWith(OWN_MARK);
+	}
 
 	/**
 	 * Was ein Pack fuer einen Eintrag hat.
@@ -149,7 +163,14 @@ public final class PackScanner {
 				String file = p.getFileName().toString();
 				if (Files.isDirectory(p)) {
 					if (Files.isRegularFile(p.resolve(MCMETA))) {
-						out.add(new Pack(clean(file), p, false, "", source(root, p)));
+						boolean own = false;
+						Path credits = p.resolve("credits.txt");
+						if (Files.isRegularFile(credits)) {
+							try (java.io.InputStream in = Files.newInputStream(credits)) {
+								own = ownCredits(in);
+							}
+						}
+						out.add(new Pack(clean(file), p, false, "", source(root, p), own));
 					} else {
 						findPacks(root, p, depth + 1, out, problems);
 					}
@@ -170,20 +191,17 @@ public final class PackScanner {
 		String name = p.getFileName().toString();
 		name = clean(name.substring(0, name.length() - 4));
 		try (ZipFile zip = new ZipFile(p.toFile())) {
-			// Packs, die das Studio selbst gebaut hat, sind keine Quelle -
-			// sie bestehen nur aus Bildern anderer Packs. Erkennbar an der
-			// credits.txt, die nur das Studio so schreibt.
+			// Vom Studio gebaut? Erkennbar an der credits.txt, die nur das
+			// Studio so schreibt.
+			boolean own = false;
 			ZipEntry credits = zip.getEntry("credits.txt");
 			if (credits != null) {
 				try (java.io.InputStream in = zip.getInputStream(credits)) {
-					if (new String(in.readNBytes(64), java.nio.charset.StandardCharsets.UTF_8)
-							.startsWith(OWN_MARK)) {
-						return null;
-					}
+					own = ownCredits(in);
 				}
 			}
 			if (zip.getEntry(MCMETA) != null) {
-				return new Pack(name, p, true, "", source(root, p));
+				return new Pack(name, p, true, "", source(root, p), own);
 			}
 			// In einem Unterordner? Nur EINE Ebene - tiefer verschachtelt
 			// ist kein Pack mehr, sondern ein Archiv voller Dinge.
@@ -192,7 +210,7 @@ public final class PackScanner {
 				String n = e.nextElement().getName();
 				int slash = n.indexOf('/');
 				if (slash > 0 && n.equals(n.substring(0, slash + 1) + MCMETA)) {
-					return new Pack(name, p, true, n.substring(0, slash + 1), source(root, p));
+					return new Pack(name, p, true, n.substring(0, slash + 1), source(root, p), false);
 				}
 			}
 		} catch (IOException ex) {

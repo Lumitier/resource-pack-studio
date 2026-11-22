@@ -169,6 +169,112 @@ public final class StudioIndex {
 		}
 	}
 
+	/** Packs, die das Studio gebaut hat - fuer "Pack bearbeiten". Nach Namen sortiert. */
+	public static List<PackScanner.Pack> ownPacks() {
+		PackScanner.Result r = result;
+		if (r == null) {
+			return List.of();
+		}
+		List<PackScanner.Pack> out = new java.util.ArrayList<>();
+		for (PackScanner.Pack p : r.packs()) {
+			if (p.own()) {
+				out.add(p);
+			}
+		}
+		out.sort((x, y) -> x.name().compareToIgnoreCase(y.name()));
+		return out;
+	}
+
+	/**
+	 * Oeffnet ein selbst gebautes Pack zum Bearbeiten: Die Auswahl, aus der
+	 * es gebaut wurde, wird wieder hergestellt.
+	 *
+	 * Je Eintrag zuerst das urspruengliche Pack. Gibt es das nicht mehr
+	 * (geloescht, umbenannt), das Bild aus dem eigenen Pack selbst - so geht
+	 * nichts verloren. Aeltere eigene Packs ohne Auswahl-Datei: alles, was
+	 * sie enthalten, wird aus ihnen selbst gewaehlt.
+	 *
+	 * @return wie viele Eintraege gewaehlt wurden
+	 */
+	public static int openOwn(PackScanner.Pack own) {
+		PackScanner.Result r = result;
+		if (r == null) {
+			return 0;
+		}
+		JsonObject saved = readOwnSelection(own);
+		SELECTION.clear();
+		for (Map.Entry<StudioItem, List<PackScanner.Variant>> e : r.variants().entrySet()) {
+			String id = e.getKey().id();
+			PackScanner.Variant pick = null;
+			JsonElement el = saved == null ? null : saved.get(id);
+			if (el != null && el.isJsonObject() && el.getAsJsonObject().has("pack")
+					&& el.getAsJsonObject().has("entry")) {
+				String pack = el.getAsJsonObject().get("pack").getAsString();
+				String entry = el.getAsJsonObject().get("entry").getAsString();
+				for (PackScanner.Variant v : e.getValue()) {
+					if (!v.pack().own() && v.pack().path().toString().equals(pack) && v.entry().equals(entry)) {
+						pick = v;
+						break;
+					}
+				}
+			}
+			// Nicht (mehr) im Original zu finden - oder keine Auswahl-Datei:
+			// das Bild aus dem eigenen Pack.
+			if (pick == null && (saved == null || el != null)) {
+				for (PackScanner.Variant v : e.getValue()) {
+					if (v.pack().path().equals(own.path())) {
+						pick = v;
+						break;
+					}
+				}
+			}
+			if (pick != null) {
+				SELECTION.put(id, pick);
+			}
+		}
+		save();
+		version++;
+		return SELECTION.size();
+	}
+
+	private static JsonObject readOwnSelection(PackScanner.Pack own) {
+		try {
+			String text = null;
+			if (own.zip()) {
+				try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(own.path().toFile())) {
+					java.util.zip.ZipEntry e = z.getEntry(PackScanner.SELECTION_FILE);
+					if (e != null) {
+						try (java.io.InputStream in = z.getInputStream(e)) {
+							text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+						}
+					}
+				}
+			} else {
+				Path f = own.path().resolve(PackScanner.SELECTION_FILE);
+				if (Files.isRegularFile(f)) {
+					text = Files.readString(f, StandardCharsets.UTF_8);
+				}
+			}
+			if (text == null) {
+				return null;
+			}
+			JsonElement root = JsonParser.parseString(text);
+			return root.isJsonObject() ? root.getAsJsonObject() : null;
+		} catch (Exception e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not read the selection of {}", own.path(), e);
+			return null;
+		}
+	}
+
+	private static String pendingItem;
+	private static Path pendingPack;
+
+	/** Nach der naechsten Suche diesen Eintrag aus diesem Pack waehlen (Editor). */
+	public static void selectAfterScan(String itemId, Path pack) {
+		pendingItem = itemId;
+		pendingPack = pack;
+	}
+
 	public static int selectionCount() {
 		return SELECTION.size();
 	}
@@ -221,8 +327,25 @@ public final class StudioIndex {
 				loaded = true;
 				loadSaved(r);
 			}
+			// Gerade gespeicherte Zeichnung gleich auswaehlen.
+			if (pendingItem != null) {
+				for (Map.Entry<StudioItem, List<PackScanner.Variant>> e : r.variants().entrySet()) {
+					if (!e.getKey().id().equals(pendingItem)) {
+						continue;
+					}
+					for (PackScanner.Variant v : e.getValue()) {
+						if (v.pack().path().equals(pendingPack)) {
+							SELECTION.put(pendingItem, v);
+							save();
+						}
+					}
+				}
+				pendingItem = null;
+				pendingPack = null;
+			}
 		}
 		Textures.clear();
+		PackModels.clear();
 		scanning = false;
 		version++;
 	}

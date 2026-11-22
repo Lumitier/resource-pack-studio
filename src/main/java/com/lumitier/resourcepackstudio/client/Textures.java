@@ -131,6 +131,36 @@ public final class Textures {
 		return null;
 	}
 
+	/**
+	 * Irgendein Bild aus einem Pack, ueber seinen Eintrag - fuer die Bilder
+	 * eines 3D-Modells (PackModels), die keinem Teil des Eintrags entsprechen.
+	 */
+	public static Tex packEntry(PackScanner.Pack pack, String entry) {
+		String key = pack.path() + "!" + entry;
+		Tex[] slots = slots(key, 1);
+		Tex t = slots[0];
+		if (t != null) {
+			return usable(t);
+		}
+		start(slots, 0, key, () -> {
+			if (pack.zip()) {
+				try (ZipFile zip = new ZipFile(pack.path().toFile())) {
+					ZipEntry e = zip.getEntry(entry);
+					if (e == null) {
+						return null;
+					}
+					try (InputStream s = zip.getInputStream(e)) {
+						return NativeImage.read(s);
+					}
+				}
+			}
+			try (InputStream s = Files.newInputStream(pack.path().resolve(entry))) {
+				return NativeImage.read(s);
+			}
+		});
+		return null;
+	}
+
 	private static Tex[] slots(Object key, int size) {
 		Tex[] s = LOADED.get(key);
 		if (s == null) {

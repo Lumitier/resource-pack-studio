@@ -123,6 +123,19 @@ public record StudioItem(String id, String group, List<Part> parts, List<Box> bo
 		return id.startsWith(StudioItems.TEX_ID);
 	}
 
+	/**
+	 * Ein Partikel: alle Einzelbilder seiner Animation als Teile, in der
+	 * Reihenfolge, in der Minecraft sie abspielt. Siehe StudioItems.PARTICLE_ID.
+	 */
+	public boolean particle() {
+		return id.startsWith(StudioItems.PARTICLE_ID);
+	}
+
+	/** HUD (Herzen, Hotbar ...) oder Ego-Sicht (Feuer). Siehe StudioItems.HUD_ID. */
+	public boolean hud() {
+		return id.startsWith(StudioItems.HUD_ID);
+	}
+
 	/** Hauptbild - das erste. */
 	public String modern() {
 		return parts.get(0).modern();

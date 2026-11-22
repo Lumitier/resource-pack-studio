@@ -60,6 +60,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private static final int CARD_MIN_W = 76;
 	private static final int CARD_GAP = Metrics.CARD_GAP;
 	private static final int ITEM_ICON = 16;
+	/** Wie lange ein Partikel-Einzelbild in der Vorschau steht. Minecraft spielt sie aehnlich schnell ab. */
+	private static final long PARTICLE_FRAME_MS = 120L;
 	private static final int GROUP_H = Metrics.SECTION_H;
 
 	/** Zuletzt offenes Item - beim naechsten Oeffnen steht man wieder dort. */
@@ -124,7 +126,24 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private static final int BTN_H = 20;
 
 	/** Was gerade ueber dem Studio liegt. */
-	private enum Dialog { NONE, NAME, WORKING, DONE, ERROR, CLEAR }
+	private enum Dialog { NONE, NAME, WORKING, DONE, ERROR, CLEAR, OPEN }
+
+	/** Eigenes Pack, das gerade bearbeitet wird - oder null. Baut man unter seinem Namen, wird es ersetzt. */
+	private PackScanner.Pack editing;
+	/** Als Ordner statt als .zip speichern. Bleibt fuer die Sitzung, wie zuletzt gewaehlt. */
+	private static boolean asFolder;
+	private int zipX, folderX, formatY, formatW;
+	private String formatLabel = "";
+	private String zipLabel = "";
+	private String folderLabel = "";
+	/** "Pack bearbeiten" oben rechts - nur, wenn es eigene Packs gibt. */
+	private int editX, editW;
+	private String editLabel = "";
+	/** Zeilen im Oeffnen-Dialog: Lage fuer den Klick. */
+	private List<PackScanner.Pack> openPacks = List.of();
+	private int openListY, openRowH = 22;
+	private static final int OPEN_MAX = 8;
+	private static final int RING = 44;
 
 	private Dialog dialog = Dialog.NONE;
 	private final NameField nameField = new NameField();
@@ -276,6 +295,37 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 					+ " " + rel;
 				continue;
 			}
+			if (it.hud()) {
+				// Name aus der Sprachdatei, wenn es einen gibt ("Frozen Hearts"),
+				// sonst aus dem Schluessel ("heart/frozen" -> "Frozen").
+				String key = it.id().substring(StudioItems.HUD_ID.length());
+				String lang = "resourcepackstudio.hud." + key.replace('/', '.');
+				itemNames[i] = net.minecraft.client.resource.language.I18n.hasTranslation(lang)
+					? Text.translatable(lang).getString()
+					: prettyPath(key.substring(key.lastIndexOf('/') + 1));
+				itemKeys[i] = (itemNames[i] + " hud " + key.replace('/', ' ').replace('_', ' '))
+					.toLowerCase(Locale.ROOT);
+				continue;
+			}
+			if (it.particle()) {
+				// "particle:dust_plume+white_smoke" -> "Dust plume / White smoke".
+				// Mehr als drei Namen kuerzen - der Rest steht in der Suche.
+				String[] names = it.id().substring(StudioItems.PARTICLE_ID.length()).split("\\+");
+				StringBuilder sb = new StringBuilder();
+				for (int k = 0; k < Math.min(3, names.length); k++) {
+					if (k > 0) {
+						sb.append(" / ");
+					}
+					sb.append(prettyPath(names[k]));
+				}
+				if (names.length > 3) {
+					sb.append(" +").append(names.length - 3);
+				}
+				itemNames[i] = sb.toString();
+				itemKeys[i] = (String.join(" ", names).replace('_', ' ') + " particle partikel " + itemNames[i])
+					.toLowerCase(Locale.ROOT);
+				continue;
+			}
 			if (it.sky()) {
 				String dim = it.id().substring(StudioItems.SKY_ID.length());
 				itemNames[i] = Text.translatable("resourcepackstudio.sky." + dim).getString();
@@ -331,10 +381,12 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private static final int CAT_ITEMS = 0;
 	private static final int CAT_BLOCKS = 1;
 	private static final int CAT_WORN = 2;
-	private static final int CAT_TEXTURES = 3;
-	private static final int CAT_SKIES = 4;
-	private static final int CAT_SOUNDS = 5;
-	private static final int CAT_COUNT = 6;
+	private static final int CAT_HUD = 3;
+	private static final int CAT_PARTICLES = 4;
+	private static final int CAT_TEXTURES = 5;
+	private static final int CAT_SKIES = 6;
+	private static final int CAT_SOUNDS = 7;
+	private static final int CAT_COUNT = 8;
 
 	/** rowItem-Wert fuer den Kopf einer Kategorie: -10 - Kategorie. */
 	private static final int CAT_ROW = -10;
@@ -366,6 +418,12 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		if (it.sky()) {
 			return CAT_SKIES;
 		}
+		if (it.hud()) {
+			return CAT_HUD;
+		}
+		if (it.particle()) {
+			return CAT_PARTICLES;
+		}
 		if (it.texture()) {
 			return CAT_TEXTURES;
 		}
@@ -381,6 +439,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		"resourcepackstudio.studio.cat.items",
 		"resourcepackstudio.studio.cat.blocks",
 		"resourcepackstudio.studio.cat.worn",
+		"resourcepackstudio.studio.cat.hud",
+		"resourcepackstudio.studio.cat.particles",
 		"resourcepackstudio.studio.cat.textures",
 		"resourcepackstudio.studio.cat.skies",
 		"resourcepackstudio.studio.cat.sounds"};
@@ -441,9 +501,12 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			String group = null;
 			for (int i : hits) {
 				StudioItem it = items.get(i);
-				if (cat != CAT_BLOCKS && cat != CAT_SKIES && !it.group().equals(group)) {
+				if (cat != CAT_BLOCKS && cat != CAT_SKIES && cat != CAT_PARTICLES && !it.group().equals(group)) {
 					group = it.group();
-					labels.add(cat == CAT_SOUNDS
+					labels.add(cat == CAT_HUD
+						? Text.translatable("resourcepackstudio.hud.group."
+							+ group.substring(StudioItems.HUD_GROUP.length())).getString()
+						: cat == CAT_SOUNDS
 						? folderLabel(group.substring(StudioItems.SOUND_GROUP.length()))
 						: cat == CAT_TEXTURES
 						? folderLabel(group.substring(StudioItems.TEX_GROUP.length()).replace('_', ' '))
@@ -508,8 +571,10 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private void refreshLabels() {
 		PackScanner.Result r = StudioIndex.result();
 		int packs = r == null ? 0 : r.packs().size();
-		this.sideSub = Text.translatable("resourcepackstudio.studio.summary",
-			packs, StudioIndex.selectionCount()).getString();
+		this.sideSub = editing != null
+			? Text.translatable("resourcepackstudio.open.editing", editing.name()).getString()
+			: Text.translatable("resourcepackstudio.studio.summary",
+				packs, StudioIndex.selectionCount()).getString();
 		this.createLabel = Text.translatable("resourcepackstudio.create.button").getString();
 
 		StudioItem cur = items.get(selected);
@@ -644,7 +709,13 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 
 	/** Dialog oeffnen: Name eingeben. */
 	private void openNameDialog() {
-		this.nameField.reset(PackBuilder.defaultName());
+		this.nameField.reset(editing != null ? editing.name() : PackBuilder.defaultName());
+		if (editing != null) {
+			asFolder = !editing.zip();
+		}
+		this.formatLabel = Text.translatable("resourcepackstudio.format.label").getString();
+		this.zipLabel = Text.translatable("resourcepackstudio.format.zip").getString();
+		this.folderLabel = Text.translatable("resourcepackstudio.format.folder").getString();
 		this.dialog = Dialog.NAME;
 		this.dlgTitle = Text.translatable("resourcepackstudio.create.title").getString();
 		this.dlgLine1 = Text.translatable("resourcepackstudio.create.name").getString();
@@ -682,13 +753,25 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		this.noLabel = Text.translatable("resourcepackstudio.create.cancel").getString();
 	}
 
+	/** Dialog: eigenes Pack zum Bearbeiten waehlen. */
+	private void openOpenDialog() {
+		this.openPacks = StudioIndex.ownPacks();
+		this.dialog = Dialog.OPEN;
+		this.dlgTitle = Text.translatable("resourcepackstudio.open.title").getString();
+		this.dlgLine1 = "";
+		this.dlgLine2 = Text.translatable("resourcepackstudio.open.desc").getString();
+		this.dlgLine3 = "";
+		this.okLabel = "";
+		this.noLabel = Text.translatable("resourcepackstudio.create.cancel").getString();
+	}
+
 	private void startBuild() {
 		this.dialog = Dialog.WORKING;
 		this.dlgTitle = Text.translatable("resourcepackstudio.create.working").getString();
 		this.dlgLine1 = "";
 		this.dlgLine2 = "";
 		this.dlgLine3 = "";
-		PackBuilder.build(nameField.text(), icon.path(), this::onBuilt);
+		PackBuilder.build(nameField.text(), icon.path(), asFolder, editing, this::onBuilt);
 	}
 
 	private void onBuilt(PackBuilder.Built b) {
@@ -696,6 +779,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		if (b.ok()) {
 			// Fertig: Auswahl leeren, damit das naechste Pack bei null beginnt.
 			StudioIndex.clearSelection();
+			this.editing = null;
+			// Das neue Pack gleich in die Liste - es ist jetzt auch eine Quelle.
+			StudioIndex.rescan();
 			refreshLabels();
 			this.dialog = Dialog.DONE;
 			this.dlgTitle = Text.translatable("resourcepackstudio.create.done").getString();
@@ -716,6 +802,37 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		}
 	}
 
+	/** Ein Knopf einer Zweier-Wahl: gewaehlt blau mit weisser Schrift, sonst wie ein Feld. */
+	private void segment(DrawContext ctx, int x, int y, int w, String label, boolean on, int mouseX, int mouseY) {
+		boolean hov = Draw.inside(mouseX, mouseY, x, y, w, BTN_H);
+		int fill = on ? Theme.TOGGLE_ON : (hov ? Theme.FIELD_HOVER : Theme.FIELD);
+		Surface.row(ctx, x, y, w, BTN_H, fill);
+		int tw = Ui.width(this.textRenderer, label);
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(label), x + (w - tw) / 2, y, BTN_H,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, on ? 0xFFFFFFFF : Theme.TEXT);
+	}
+
+	/**
+	 * Ladekreis aus Punkten. Der Anteil "fertig" blau, der Rest blass -
+	 * und ein heller Punkt laeuft immer im Kreis, damit man auch bei
+	 * langsamen Dateien sieht, dass noch etwas passiert.
+	 */
+	private static void drawRing(DrawContext ctx, int cx, int cy, int r, float fraction) {
+		int n = 32;
+		int lit = Math.round(fraction * n);
+		int spin = (int) ((Anim.now() / 60L) % n);
+		for (int i = 0; i < n; i++) {
+			double a = -Math.PI / 2.0 + i * (Math.PI * 2.0 / n);
+			int x = cx + (int) Math.round(Math.cos(a) * r);
+			int y = cy + (int) Math.round(Math.sin(a) * r);
+			int c = i < lit ? Theme.TOGGLE_ON : Theme.DIVIDER;
+			if (i == spin) {
+				c = Anim.mix(c, 0xFFFFFFFF, 0.5F);
+			}
+			Draw.dot(ctx, x, y, 2, c);
+		}
+	}
+
 	private void renderDialog(DrawContext ctx, int mouseX, int mouseY) {
 		// Neue Ebene: Sonst laege die Schrift der Seite darunter UEBER der
 		// Dialogflaeche - Minecraft zeichnet Text einer Ebene zuletzt.
@@ -729,7 +846,13 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int h = pad + Ui.TITLE_H + Ui.TITLE_D + 12;
 		if (dialog == Dialog.NAME) {
 			h += labelH + BTN_H + 12                 // Name
-				+ labelH + iconRowH;                 // Icon: Feld links, Knopf + Hinweis rechts
+				+ labelH + iconRowH + 12             // Icon: Feld links, Knopf + Hinweis rechts
+				+ labelH + BTN_H;                    // Speichern als: .zip / Ordner
+		} else if (dialog == Dialog.OPEN) {
+			h += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 8)
+				+ Math.max(1, Math.min(OPEN_MAX, openPacks.size())) * openRowH;
+		} else if (dialog == Dialog.WORKING) {
+			h += RING + 10 + Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 0);
 		} else {
 			if (!dlgLine1.isEmpty()) h += lineH;
 			if (!dlgLine2.isEmpty()) h += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 6);
@@ -797,6 +920,50 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			Ui.drawTop(ctx, this.textRenderer,
 				Ui.small(Ui.fitSmall(this.textRenderer, iconMsg, x + w - rx)),
 				rx, y + BTN_H + 3, Ui.TOP_SMALL, iconMsgWarn ? Theme.WARN : Theme.TEXT_FAINT);
+			y += iconRowH + 12;
+
+			// Speichern als: zwei Knoepfe nebeneinander, der gewaehlte blau.
+			// Rechts daneben, ob das bearbeitete Pack ersetzt wird.
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(formatLabel), x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
+			y += labelH;
+			this.formatY = y;
+			this.formatW = Math.max(Ui.width(this.textRenderer, zipLabel), Ui.width(this.textRenderer, folderLabel)) + 24;
+			this.zipX = x;
+			this.folderX = x + formatW + 4;
+			segment(ctx, zipX, y, formatW, zipLabel, !asFolder, mouseX, mouseY);
+			segment(ctx, folderX, y, formatW, folderLabel, asFolder, mouseX, mouseY);
+			if (PackBuilder.replaces(nameField.text(), editing)) {
+				int hx = folderX + formatW + 10;
+				Ui.drawCenteredIn(ctx, this.textRenderer,
+					Ui.small(Ui.fitSmall(this.textRenderer,
+						Text.translatable("resourcepackstudio.open.replaces").getString(), x + w - hx)),
+					hx, y, BTN_H, Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+			}
+		} else if (dialog == Dialog.OPEN) {
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(Ui.fitSmall(this.textRenderer, dlgLine2, w)),
+				x, y, Ui.TOP_SMALL, Theme.TEXT_MUTED);
+			y += Ui.advance(Ui.SMALL_H, Ui.SMALL_D, 8);
+			this.openListY = y;
+			if (openPacks.isEmpty()) {
+				Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(emptyLabel), x, y, openRowH,
+					Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+			}
+			for (int i = 0; i < Math.min(OPEN_MAX, openPacks.size()); i++) {
+				PackScanner.Pack pk = openPacks.get(i);
+				int ry = y + i * openRowH;
+				boolean rh = Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, openRowH);
+				if (rh) {
+					Surface.row(ctx, x - 4, ry, w + 8, openRowH, Theme.FIELD_HOVER);
+				}
+				String kind = Text.translatable(pk.zip() ? "resourcepackstudio.format.zip"
+					: "resourcepackstudio.format.folder").getString();
+				int kw = Ui.widthSmall(this.textRenderer, kind);
+				Ui.drawCenteredIn(ctx, this.textRenderer,
+					Ui.text(Ui.fit(this.textRenderer, pk.name(), w - kw - 12)), x, ry, openRowH,
+					Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT);
+				Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(kind), x + w - kw, ry, openRowH,
+					Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+			}
 		} else {
 			if (!dlgLine1.isEmpty()) {
 				Ui.drawTop(ctx, this.textRenderer, Ui.bold(Ui.fitBold(this.textRenderer, dlgLine1, w)),
@@ -819,6 +986,17 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		}
 
 		if (dialog == Dialog.WORKING) {
+			// Ladekreis: Punkte im Kreis, die geschriebenen blau. Darunter
+			// "120 / 340". Vor dem ersten Zaehlen dreht sich ein Bogen.
+			int total = PackBuilder.progressTotal;
+			int done = Math.min(total, PackBuilder.progressDone);
+			drawRing(ctx, dlgX + dlgW / 2, y + RING / 2, RING / 2,
+				total > 0 ? done / (float) total : 0.0F);
+			y += RING + 10;
+			String count = done + " / " + total;
+			int tw = Ui.widthSmall(this.textRenderer, count);
+			Ui.drawTop(ctx, this.textRenderer, Ui.small(count), dlgX + (dlgW - tw) / 2, y,
+				Ui.TOP_SMALL, Theme.TEXT_MUTED);
 			okW = noW = 0;
 			return;
 		}
@@ -863,7 +1041,29 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		if (dialog == Dialog.WORKING) {
 			return true;
 		}
+		if (dialog == Dialog.OPEN) {
+			int dx = dlgX + 14;
+			int dw = dlgW - 28;
+			for (int i = 0; i < Math.min(OPEN_MAX, openPacks.size()); i++) {
+				if (Draw.inside(mx, my, dx - 4, openListY + i * openRowH, dw + 8, openRowH)) {
+					PackScanner.Pack pk = openPacks.get(i);
+					StudioIndex.openOwn(pk);
+					this.editing = pk;
+					this.dialog = Dialog.NONE;
+					refreshLabels();
+					return true;
+				}
+			}
+		}
 		if (dialog == Dialog.NAME) {
+			if (Draw.inside(mx, my, zipX, formatY, formatW, BTN_H)) {
+				asFolder = false;
+				return true;
+			}
+			if (Draw.inside(mx, my, folderX, formatY, formatW, BTN_H)) {
+				asFolder = true;
+				return true;
+			}
 			if (!icon.choosing() && Draw.inside(mx, my, chooseX, chooseY, chooseW, BTN_H)) {
 				icon.choose(this::onIconPicked);
 				return true;
@@ -879,6 +1079,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				startBuild();
 			} else if (dialog == Dialog.CLEAR) {
 				StudioIndex.clearSelection();
+				this.editing = null;
 				refreshLabels();
 				dialog = Dialog.NONE;
 			} else if (dialog == Dialog.DONE && built != null && built.file() != null) {
@@ -1053,6 +1254,19 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			this.clearW = 0;
 		}
 
+		// Eigenes Pack wieder oeffnen - nur, wenn es eins gibt.
+		if (!StudioIndex.ownPacks().isEmpty()) {
+			this.editLabel = Text.translatable("resourcepackstudio.open.button").getString();
+			this.editW = Ui.width(this.textRenderer, editLabel) + 20;
+			this.editX = (clearW > 0 ? clearX : rescanX) - 6 - editW;
+			boolean eh = Draw.inside(mouseX, mouseY, editX, rescanY, editW, rescanH);
+			Surface.row(ctx, editX, rescanY, editW, rescanH, eh ? Theme.FIELD_HOVER : Theme.FIELD);
+			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(editLabel), editX + 10, rescanY, rescanH,
+				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT_MUTED);
+		} else {
+			this.editW = 0;
+		}
+
 		PackScanner.Result r = StudioIndex.result();
 		if (r == null) {
 			// Noch nie fertig gesucht: entweder laeuft es, oder es ist
@@ -1063,7 +1277,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		}
 
 		List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
-		int cards = vs.size() + 1;
+		boolean canDraw = EditorScreen.editable(items.get(selected));
+		int cards = vs.size() + 1 + (canDraw ? 1 : 0);
 		int rows = (cards + cols - 1) / cols;
 		int extra = vs.isEmpty() ? Ui.advance(Ui.BODY_H, Ui.BODY_D, 0) + 12 : 0;
 		this.contentHeight = rows * (CARD_H + CARD_GAP) + extra;
@@ -1091,12 +1306,16 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			if (by + CARD_H < gt || by > listBottom) {
 				continue;
 			}
+			boolean hover = inList && Draw.inside(mouseX, mouseY, bx, by, colW, CARD_H);
+			if (canDraw && i == cards - 1) {
+				drawAddCard(ctx, bx, by, hover);
+				continue;
+			}
 			PackScanner.Variant v = i == 0 ? null : vs.get(i - 1);
 			boolean isChosen = v == chosen;
-			boolean hover = inList && Draw.inside(mouseX, mouseY, bx, by, colW, CARD_H);
 			drawCard(ctx, bx, by, item, v, i < cardNames.length ? cardNames[i] : "", isChosen, hover);
 		}
-		if (vs.isEmpty()) {
+		if (vs.isEmpty() && !canDraw) {
 			Ui.drawTop(ctx, this.textRenderer,
 				Ui.text(Ui.fit(this.textRenderer, emptyLabel, cw)),
 				cx, gt + CARD_H + CARD_GAP + 6 - scroll, Ui.TOP_BODY, Theme.TEXT_FAINT);
@@ -1287,6 +1506,25 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		return super.scaledMouseReleased(click);
 	}
 
+	/** Letzte Karte: "Selbst zeichnen" - ein Plus und die Beschriftung. */
+	private void drawAddCard(DrawContext ctx, int x, int y, boolean hover) {
+		int fill = hover ? Theme.CARD_HOVER : Theme.CARD;
+		if (!Surface.glassCard(ctx, x, y, colW, CARD_H, fill)) {
+			Surface.card(ctx, x, y, colW, CARD_H, fill);
+		}
+		Draw.roundedOutline(ctx, x, y, colW, CARD_H, 6, hover ? Theme.TOGGLE_ON : Theme.DIVIDER);
+		int cxm = x + colW / 2;
+		int cym = y + CARD_PAD + PREVIEW / 2;
+		int arm = PREVIEW / 4;
+		int c = hover ? Theme.TEXT : Theme.TEXT_FAINT;
+		ctx.fill(cxm - arm, cym - 1, cxm + arm + 1, cym + 1, c);
+		ctx.fill(cxm - 1, cym - arm, cxm + 1, cym + arm + 1, c);
+		String name = Text.translatable("resourcepackstudio.editor.add").getString();
+		int nw = Ui.widthSmall(this.textRenderer, name);
+		Ui.drawTop(ctx, this.textRenderer, Ui.small(name), x + (colW - nw) / 2, y + CARD_PAD + PREVIEW + 6,
+			Ui.TOP_SMALL, hover ? Theme.TEXT : Theme.TEXT_MUTED);
+	}
+
 	private void drawCard(DrawContext ctx, int x, int y, StudioItem item, PackScanner.Variant v,
 	                      String name, boolean chosen, boolean hover) {
 		Surface.shadowCard(ctx, x, y, colW, CARD_H, 3, 2, Theme.SHADOW_CARD);
@@ -1332,6 +1570,27 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			}
 			return;
 		}
+		if (item.hud()) {
+			drawHud(ctx, item, v, x, y, size);
+			return;
+		}
+		if (item.particle()) {
+			// Die Einzelbilder nacheinander, wie im Spiel - so sieht man
+			// den ganzen Ablauf. In der schmalen Liste links nur das erste
+			// Bild: 80 zappelnde Symbole lenken ab.
+			int n = item.parts().size();
+			int frame = size > ITEM_ICON && n > 1
+				? (int) ((System.currentTimeMillis() / PARTICLE_FRAME_MS) % n) : 0;
+			Textures.Tex t = tex(item, v, frame);
+			if (t == null && frame != 0) {
+				// Bild laedt noch: das erste zeigen statt eines Lochs.
+				t = tex(item, v, 0);
+			}
+			if (t != null) {
+				drawFitted(ctx, t, x, y, size, true);
+			}
+			return;
+		}
 		if (item.texture()) {
 			// Beliebige Textur: eingepasst, nicht verzerrt. Animierte
 			// (Lava, Wasser, Feuer) liegen als Streifen untereinander -
@@ -1341,6 +1600,16 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				drawFitted(ctx, t, x, y, size, true);
 			}
 			return;
+		}
+		// Bringt das Pack ein eigenes 3D-Modell mit (3D-Streitkolben,
+		// Kristalle ...), dieses zeigen - nicht das Bild flach.
+		if (v != null && !item.cube()) {
+			PackModels.Model model = PackModels.preview(item, v);
+			if (model != null) {
+				PackScanner.Pack pk = v.pack();
+				drawBoxes(ctx, item, model.boxes(), i -> Textures.packEntry(pk, model.textures().get(i)), x, y, size);
+				return;
+			}
 		}
 		if (!item.cube() && item.modern().startsWith("entity/")) {
 			// Faltbogen (Kiste, Bett, Schild ...): das ganze Bild, eingepasst.
@@ -1373,10 +1642,81 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			}
 			return;
 		}
-		// Blockmodell wie im Inventar, aus seinen Quadern. Projektion:
-		// Norden links, Osten rechts, oben oben. Ein voller Wuerfel fuellt
-		// genau size x size.
-		for (StudioItem.Box b : item.boxes()) {
+		drawBoxes(ctx, item, item.boxes(), part -> tex(item, v, part), x, y, size);
+	}
+
+	/**
+	 * HUD-Eintrag so, wie er im Spiel aussieht: Herzen als Reihe (drei volle,
+	 * ein halbes), die Hotbar mit Auswahlrahmen auf dem ersten Platz, das
+	 * Feuer der Ego-Sicht unten links und rechts. Alles andere: die Bilder
+	 * nebeneinander.
+	 *
+	 * In der schmalen Liste links nur das erste Bild - eine Reihe aus vier
+	 * Herzen waere dort zu klein, um etwas zu erkennen.
+	 */
+	private static void drawHud(DrawContext ctx, StudioItem item, PackScanner.Variant v, int x, int y, int size) {
+		String key = item.id().substring(StudioItems.HUD_ID.length());
+		Textures.Tex t0 = tex(item, v, 0);
+		if (size <= ITEM_ICON || t0 == null) {
+			if (t0 != null) {
+				drawFitted(ctx, t0, x, y, size, true);
+			}
+			return;
+		}
+		if (key.startsWith("heart/") && !key.equals("heart/container")) {
+			Textures.Tex half = item.parts().size() > 1 ? tex(item, v, 1) : t0;
+			int cell = size / 4;
+			int hy = y + (size - cell) / 2;
+			for (int i = 0; i < 4; i++) {
+				Textures.Tex t = i < 3 || half == null ? t0 : half;
+				drawFitted(ctx, t, x + i * cell, hy, cell, true);
+			}
+			return;
+		}
+		if (key.equals("hotbar")) {
+			// 182 x 22, auf die Breite eingepasst. Der Rahmen ist 24 x 23
+			// und sitzt einen Pixel links ueber dem ersten Platz.
+			float sc = size / (float) Math.max(1, t0.w());
+			int hh = Math.max(1, Math.round(t0.h() * sc));
+			int hy = y + (size - hh) / 2;
+			ctx.drawTexture(RenderPipelines.GUI_TEXTURED, t0.id(), x, hy, 0.0F, 0.0F,
+				size, hh, t0.w(), t0.h(), t0.w(), t0.h());
+			Textures.Tex sel = item.parts().size() > 1 ? tex(item, v, 1) : null;
+			if (sel != null) {
+				int sw = Math.max(1, Math.round(sel.w() * sc));
+				int sh = Math.max(1, Math.round(sel.h() * sc));
+				ctx.drawTexture(RenderPipelines.GUI_TEXTURED, sel.id(), x - Math.round(sc), hy - Math.round(sc),
+					0.0F, 0.0F, sw, sh, sel.w(), sel.h(), sel.w(), sel.h());
+			}
+			return;
+		}
+		if (key.equals("fire") || key.equals("soul_fire")) {
+			// Wie in der Ego-Sicht: zwei Flammen unten, links und rechts.
+			int f = size / 2;
+			drawFitted(ctx, t0, x, y + size - f, f, true);
+			drawFitted(ctx, t0, x + size - f, y + size - f, f, true);
+			return;
+		}
+		int n = Math.min(4, item.parts().size());
+		int cell = size / Math.max(1, n);
+		for (int i = 0; i < n; i++) {
+			Textures.Tex t = tex(item, v, i);
+			if (t != null) {
+				drawFitted(ctx, t, x + i * cell, y + (size - cell) / 2, cell, true);
+			}
+		}
+	}
+
+	/**
+	 * Quader wie im Inventar. Projektion: Norden links, Osten rechts, oben
+	 * oben. Ein voller Wuerfel fuellt genau size x size.
+	 *
+	 * @param texOf Bild zu Face.part - bei Bloecken der Teil des Eintrags,
+	 *              bei Modellen aus Packs ein Bild aus deren Liste
+	 */
+	private static void drawBoxes(DrawContext ctx, StudioItem item, List<StudioItem.Box> boxes,
+	                              java.util.function.IntFunction<Textures.Tex> texOf, int x, int y, int size) {
+		for (StudioItem.Box b : boxes) {
 			float k = size / 32.0F;
 			float dx = b.x2() - b.x1();
 			float dy = b.y2() - b.y1();
@@ -1390,17 +1730,17 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				// (deshalb fehlte die Oberseite).
 				float tx = px(x, size, b.x1(), b.z2());
 				float ty = py(y, size, b.x1(), b.y2(), b.z2());
-				face(ctx, tex(item, v, b.up().part()), b.up(), tx, ty,
+				face(ctx, texOf.apply(b.up().part()), b.up(), tx, ty,
 					dx * k, dx * k / 2, -dz * k, dz * k / 2, shade(item, b.up(), 0xFF));
 			}
 			if (b.north() != null) {
-				face(ctx, tex(item, v, b.north().part()), b.north(), ox, oy,
+				face(ctx, texOf.apply(b.north().part()), b.north(), ox, oy,
 					dx * k, dx * k / 2, 0, dy * k, shade(item, b.north(), 0xCF));
 			}
 			if (b.east() != null) {
 				float ex = px(x, size, b.x2(), b.z1());
 				float ey = py(y, size, b.x2(), b.y2(), b.z1());
-				face(ctx, tex(item, v, b.east().part()), b.east(), ex, ey,
+				face(ctx, texOf.apply(b.east().part()), b.east(), ex, ey,
 					dz * k, -dz * k / 2, 0, dy * k, shade(item, b.east(), 0xA8));
 			}
 		}
@@ -1617,6 +1957,13 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			return false;
 		}
 
+		// Eigenes Pack oeffnen.
+		if (editW > 0 && Draw.inside(mx, my, editX, rescanY, editW, rescanH)) {
+			this.search.setFocused(false);
+			openOpenDialog();
+			return true;
+		}
+
 		// Alles abwaehlen - mit Rueckfrage, das laesst sich nicht rueckgaengig machen.
 		if (clearW > 0 && Draw.inside(mx, my, clearX, rescanY, clearW, rescanH)) {
 			this.search.setFocused(false);
@@ -1642,12 +1989,18 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		int gt = gridTop();
 		if (StudioIndex.result() != null && Draw.inside(mx, my, cx, gt, cw, listBottom - gt)) {
 			List<PackScanner.Variant> vs = variants.length > selected ? variants[selected] : List.of();
-			int cards = vs.size() + 1;
+			boolean canDraw = EditorScreen.editable(items.get(selected));
+			int cards = vs.size() + 1 + (canDraw ? 1 : 0);
 			for (int i = 0; i < cards; i++) {
 				int bx = cx + (i % cols) * (colW + CARD_GAP);
 				int by = gt + (i / cols) * (CARD_H + CARD_GAP) - scroll;
 				if (Draw.inside(mx, my, bx, by, colW, CARD_H)) {
 					StudioItem cur = items.get(selected);
+					if (canDraw && i == cards - 1) {
+						// Zeichnen: mit dem, was gerade gewaehlt ist, als Vorlage.
+						this.client.setScreen(new EditorScreen(this, cur, StudioIndex.selected(cur), itemNames[selected]));
+						return true;
+					}
 					PackScanner.Variant v = i == 0 ? null : vs.get(i - 1);
 					// Sound: Klick waehlt UND spielt ab - egal wo auf der Karte.
 					if (cur.sound()) {

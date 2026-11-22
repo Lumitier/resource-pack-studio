@@ -46,6 +46,25 @@ public final class StudioItems {
 	public static final String TEX_GROUP = "tex/";
 
 	/**
+	 * Partikel: "particle:" + Namen der Partikel, die genau diese Bilder
+	 * benutzen, mit "+" verbunden ("particle:explosion",
+	 * "particle:dust_plume+white_smoke"). Ein Eintrag pro Bilderfolge aus
+	 * assets/minecraft/particles/*.json - nicht pro Einzelbild: Explosion
+	 * hat 16 Bilder, waehlen will man sie nur als Ganzes.
+	 */
+	public static final String PARTICLE_ID = "particle:";
+
+	/**
+	 * HUD und Ego-Sicht: "hud:" + Schluessel ("hud:heart/frozen",
+	 * "hud:hotbar", "hud:fire"). Gruppe "hud/" + Bereich ("hud/hearts").
+	 * Ein Eintrag fasst zusammen, was zusammengehoert - die gefrorenen
+	 * Herzen sind EIN Eintrag mit voll, halb, Hardcore und blinkend.
+	 */
+	public static final String HUD_ID = "hud:";
+	public static final String HUD_GROUP = "hud/";
+	public static final String PARTICLES = "particle";
+
+	/**
 	 * Himmel: "sky:" + Ordner der Dimension im OptiFine-Format
 	 * ("sky:world0" = Oberwelt, "sky:world-1" = Nether, "sky:world1" = Ende).
 	 */
