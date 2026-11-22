@@ -387,6 +387,21 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	private static final int CAT_SKIES = 6;
 	private static final int CAT_SOUNDS = 7;
 	private static final int CAT_COUNT = 8;
+	/** "Meine Packs": ganz oben, eigene Zeilen statt Items. */
+	private static final int CAT_MINE = 8;
+	/** Zeile fuer ein eigenes Pack: PACK_ROW - Index in {@link #mine}. */
+	private static final int PACK_ROW = -1000;
+
+	private static boolean isPackRow(int row) {
+		return row <= PACK_ROW;
+	}
+
+	private static boolean isCatRow(int row) {
+		return row <= CAT_ROW && row > PACK_ROW;
+	}
+
+	/** Eigene Packs in der Reihenfolge der Seitenleiste. */
+	private List<PackScanner.Pack> mine = List.of();
 
 	/** rowItem-Wert fuer den Kopf einer Kategorie: -10 - Kategorie. */
 	private static final int CAT_ROW = -10;
@@ -395,7 +410,7 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 	 * Offene Kategorien. Bei jedem Oeffnen des Studios ist alles zu - auch
 	 * nach einem Neustart. Ein Fensterwechsel (init) aendert nichts daran.
 	 */
-	private final java.util.Set<Integer> expanded = new java.util.HashSet<>();
+	private final java.util.Set<Integer> expanded = new java.util.HashSet<>(java.util.Set.of(CAT_MINE));
 
 	/**
 	 * Waehrend einer Suche: zugeklappte Kategorien. Bei einer Suche ist erst
@@ -443,7 +458,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		"resourcepackstudio.studio.cat.particles",
 		"resourcepackstudio.studio.cat.textures",
 		"resourcepackstudio.studio.cat.skies",
-		"resourcepackstudio.studio.cat.sounds"};
+		"resourcepackstudio.studio.cat.sounds",
+		"resourcepackstudio.studio.cat.mine"};
 
 	private void buildRows() {
 		buildRows(true);
@@ -476,6 +492,34 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		List<String> labels = new ArrayList<>();
 		List<String> counts = new ArrayList<>();
 		List<Integer> idx = new ArrayList<>();
+
+		// MEINE PACKS: alles, was das Studio gebaut hat (auch mit aelteren
+		// Versionen). Ein Klick oeffnet das Pack zum Bearbeiten.
+		this.mine = StudioIndex.ownPacks();
+		List<Integer> mineHits = new ArrayList<>();
+		for (int k = 0; k < mine.size(); k++) {
+			if (q.isEmpty() || mine.get(k).name().toLowerCase(Locale.ROOT).contains(q)) {
+				mineHits.add(k);
+			}
+		}
+		if (!mineHits.isEmpty() || q.isEmpty()) {
+			labels.add(Text.translatable(CAT_KEYS[CAT_MINE]).getString());
+			counts.add(Integer.toString(mineHits.size()));
+			idx.add(CAT_ROW - CAT_MINE);
+			if (isOpen(CAT_MINE)) {
+				if (mine.isEmpty()) {
+					labels.add(Text.translatable("resourcepackstudio.mine.empty").getString());
+					counts.add(null);
+					idx.add(-1);
+				}
+				for (int k : mineHits) {
+					labels.add(mine.get(k).name());
+					counts.add(mine.get(k).zip() ? ".zip" : Text.translatable("resourcepackstudio.format.folder").getString());
+					idx.add(PACK_ROW - k);
+				}
+			}
+		}
+
 		for (int cat = 0; cat < CAT_COUNT; cat++) {
 			List<Integer> hits = new ArrayList<>();
 			for (int k = 0; k < order.length; k++) {
@@ -531,9 +575,9 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		for (int i = 0; i < n; i++) {
 			rowItem[i] = idx.get(i);
 			// Luft vor jeder Kategorie ausser der ersten, etwas weniger vor Gruppen.
-			if (i > 0 && rowItem[i] <= CAT_ROW) {
+			if (i > 0 && isCatRow(rowItem[i])) {
 				y += 6;
-			} else if (i > 0 && rowItem[i] == -1 && rowItem[i - 1] > CAT_ROW) {
+			} else if (i > 0 && rowItem[i] == -1 && !isCatRow(rowItem[i - 1])) {
 				y += 4;
 			}
 			rowY[i] = y;
@@ -558,6 +602,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			buildNames();
 			buildRows();
 		}
+		// Neue Suche: Die Liste der eigenen Packs kann sich geaendert haben.
+		buildRows(false);
 		this.variants = new List[items.size()];
 		this.itemCounts = new String[items.size()];
 		for (int i = 0; i < items.size(); i++) {
@@ -1133,6 +1179,11 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 				continue;
 			}
 			int item = rowItem[i];
+			if (isPackRow(item)) {
+				drawPackRow(ctx, i, mine.get(PACK_ROW - item), x, ry, w,
+					inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H));
+				continue;
+			}
 			if (item <= CAT_ROW) {
 				drawCategoryRow(ctx, i, CAT_ROW - item, x, ry, w,
 					inList && Draw.inside(mouseX, mouseY, x - 4, ry, w + 8, Metrics.ROW_H));
@@ -1153,6 +1204,23 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 		ctx.disableScissor();
 		drawBar(ctx, sideBarX(), sideTop, sideBottom - sideTop, sideHeight, sideScroll,
 			dragBar == BAR_SIDE || hoverBar(mouseX, mouseY, sideBarX(), sideTop, sideBottom - sideTop));
+	}
+
+	/** Ein eigenes Pack: Name, rechts .zip oder Ordner. Hervorgehoben, wenn es gerade bearbeitet wird. */
+	private void drawPackRow(DrawContext ctx, int row, PackScanner.Pack pk, int x, int y, int w, boolean hover) {
+		boolean open = editing != null && editing.path().equals(pk.path());
+		if (open) {
+			Surface.row(ctx, x - 4, y, w + 8, Metrics.ROW_H, Theme.ROW_SELECTED);
+		} else if (hover) {
+			Surface.row(ctx, x - 4, y, w + 8, Metrics.ROW_H, Theme.ROW_HOVER);
+		}
+		String kind = rowCount[row] == null ? "" : rowCount[row];
+		int kw = Ui.widthSmall(this.textRenderer, kind);
+		Ui.drawCenteredIn(ctx, this.textRenderer, Ui.small(kind), x + w - kw, y, Metrics.ROW_H,
+			Ui.SMALL_H, Ui.SMALL_D, Ui.TOP_SMALL, Theme.TEXT_FAINT);
+		Ui.drawCenteredIn(ctx, this.textRenderer,
+			Ui.text(Ui.fit(this.textRenderer, rowLabel[row], w - 14 - kw - 6)), x + 14, y, Metrics.ROW_H,
+			Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, open ? Theme.TEXT : Theme.TEXT_MUTED);
 	}
 
 	/** Kopf einer Kategorie: Pfeil, fetter Name, rechts die Anzahl. */
@@ -1254,18 +1322,8 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			this.clearW = 0;
 		}
 
-		// Eigenes Pack wieder oeffnen - nur, wenn es eins gibt.
-		if (!StudioIndex.ownPacks().isEmpty()) {
-			this.editLabel = Text.translatable("resourcepackstudio.open.button").getString();
-			this.editW = Ui.width(this.textRenderer, editLabel) + 20;
-			this.editX = (clearW > 0 ? clearX : rescanX) - 6 - editW;
-			boolean eh = Draw.inside(mouseX, mouseY, editX, rescanY, editW, rescanH);
-			Surface.row(ctx, editX, rescanY, editW, rescanH, eh ? Theme.FIELD_HOVER : Theme.FIELD);
-			Ui.drawCenteredIn(ctx, this.textRenderer, Ui.text(editLabel), editX + 10, rescanY, rescanH,
-				Ui.BODY_H, Ui.BODY_D, Ui.TOP_BODY, Theme.TEXT_MUTED);
-		} else {
-			this.editW = 0;
-		}
+		// Eigene Packs oeffnet man jetzt in der Seitenleiste (Meine Packs).
+		this.editW = 0;
 
 		PackScanner.Result r = StudioIndex.result();
 		if (r == null) {
@@ -1928,6 +1986,16 @@ public final class StudioScreen extends ScaledScreen implements LumiScreen {
 			int w = sw - Metrics.PAD * 2;
 			for (int i = 0; i < rowItem.length; i++) {
 				int ry = sideTop + rowY[i] - sideScroll;
+				if (isPackRow(rowItem[i])) {
+					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {
+						PackScanner.Pack pk = mine.get(PACK_ROW - rowItem[i]);
+						StudioIndex.openOwn(pk);
+						this.editing = pk;
+						refreshLabels();
+						return true;
+					}
+					continue;
+				}
 				if (rowItem[i] <= CAT_ROW) {
 					// Kategorie auf- oder zuklappen - auch waehrend einer Suche.
 					if (Draw.inside(mx, my, x - 4, ry, w + 8, Metrics.ROW_H)) {

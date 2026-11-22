@@ -202,6 +202,10 @@ public final class StudioIndex {
 			return 0;
 		}
 		JsonObject saved = readOwnSelection(own);
+		// Packs von vor 2.2.0 haben keine Auswahl-Datei, aber eine
+		// credits.txt mit "eintrag (pfad)  <-  Packname". Daraus laesst sich
+		// die Herkunft meist wiederherstellen.
+		List<String[]> credits = saved == null ? readOwnCredits(own) : List.of();
 		SELECTION.clear();
 		for (Map.Entry<StudioItem, List<PackScanner.Variant>> e : r.variants().entrySet()) {
 			String id = e.getKey().id();
@@ -215,6 +219,17 @@ public final class StudioIndex {
 					if (!v.pack().own() && v.pack().path().toString().equals(pack) && v.entry().equals(entry)) {
 						pick = v;
 						break;
+					}
+				}
+			}
+			if (pick == null && !credits.isEmpty()) {
+				outer:
+				for (String[] c : credits) {
+					for (PackScanner.Variant v : e.getValue()) {
+						if (!v.pack().own() && v.pack().name().equals(c[1]) && v.entry().endsWith(c[0])) {
+							pick = v;
+							break outer;
+						}
 					}
 				}
 			}
@@ -235,6 +250,49 @@ public final class StudioIndex {
 		save();
 		version++;
 		return SELECTION.size();
+	}
+
+	/** Aus credits.txt: je Zeile {pfad, packname}. Leer, wenn es keine gibt. */
+	private static List<String[]> readOwnCredits(PackScanner.Pack own) {
+		List<String[]> out = new java.util.ArrayList<>();
+		try {
+			String text = null;
+			if (own.zip()) {
+				try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(own.path().toFile())) {
+					java.util.zip.ZipEntry e = z.getEntry(own.prefix() + "credits.txt");
+					if (e != null) {
+						try (java.io.InputStream in = z.getInputStream(e)) {
+							text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+						}
+					}
+				}
+			} else {
+				Path f = own.path().resolve("credits.txt");
+				if (Files.isRegularFile(f)) {
+					text = Files.readString(f, StandardCharsets.UTF_8);
+				}
+			}
+			if (text == null) {
+				return out;
+			}
+			for (String line : text.split("\\R")) {
+				int arrow = line.indexOf("  <-  ");
+				int open = line.lastIndexOf(" (", arrow);
+				int close = line.lastIndexOf(')', arrow);
+				if (arrow < 0 || open < 0 || close < open) {
+					continue;
+				}
+				String path = line.substring(open + 2, close);
+				// Himmel: "(3 file(s))" ist kein Pfad.
+				if (path.endsWith("file(s)") || path.endsWith("file(s")) {
+					continue;
+				}
+				out.add(new String[] {path, line.substring(arrow + 6).trim()});
+			}
+		} catch (Exception e) {
+			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not read the credits of {}", own.path(), e);
+		}
+		return out;
 	}
 
 	private static JsonObject readOwnSelection(PackScanner.Pack own) {

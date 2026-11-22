@@ -472,9 +472,8 @@ public final class PackBuilder {
 	 * Das Bild des Packs, in dieser Reihenfolge:
 	 *  1. das im Dialog gewaehlte,
 	 *  2. beim Bearbeiten das Bild des alten Packs - sonst verloere ein
-	 *     bearbeitetes Pack sein Icon, nur weil man es nicht neu gewaehlt hat,
-	 *  3. das Icon des Studios. Daran erkennt man gebaute Packs auch in
-	 *     Minecrafts Pack-Liste auf einen Blick.
+	 *     bearbeitetes Pack sein Icon, nur weil man es nicht neu gewaehlt hat.
+	 * Sonst keins.
 	 */
 	private static byte[] packIcon(Path icon, PackScanner.Pack replace) {
 		try {
@@ -498,9 +497,7 @@ public final class PackBuilder {
 					}
 				}
 			}
-			try (java.io.InputStream in = PackBuilder.class.getResourceAsStream("/assets/resourcepackstudio/icon.png")) {
-				return in == null ? null : in.readAllBytes();
-			}
+			return null;
 		} catch (IOException e) {
 			ResourcePackStudio.LOGGER.warn("[Resource Pack Studio] Could not read the pack icon", e);
 			return null;
@@ -509,10 +506,9 @@ public final class PackBuilder {
 
 	private static String mcmeta(String name) {
 		JsonObject pack = new JsonObject();
-		// Zwei Zeilen in Minecrafts Pack-Liste: der Name grau, darunter das
-		// Erkennungszeichen in Gold. PackScanner erkennt eigene Packs auch
-		// an diesem Satz - nicht umformulieren.
-		pack.addProperty("description", "\u00a77" + name + "\n\u00a76Made with Resource Pack Studio");
+		// PackScanner erkennt eigene Packs (auch alte, ohne Zeile in
+		// credits.txt) an diesem Satz - nicht umformulieren.
+		pack.addProperty("description", name + " - made with Resource Pack Studio");
 		pack.addProperty("min_format", PACK_FORMAT);
 		pack.addProperty("max_format", PACK_FORMAT);
 		JsonObject root = new JsonObject();
